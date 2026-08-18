@@ -38,3 +38,14 @@ export interface ResumenCierre {
   cantidadMovimientosPago: number;
   tieneMovimientos: boolean;
 }
+
+export type TipoMovimiento = "venta" | "gasto" | "pago";
+
+export interface MovimientoDia {
+  id: number;
+  tipo: TipoMovimiento;
+  monto: number;
+  medioPago: MedioPago;
+  hora: string;
+  detalle: string;
+}

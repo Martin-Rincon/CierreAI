@@ -102,6 +102,17 @@ function migrate(): void {
     CREATE INDEX IF NOT EXISTS idx_causas_cierre
       ON causas_candidatas(cierre_id, estado);
   `);
+
+  for (const table of ["ventas", "gastos", "movimientos_pago"]) {
+    const columns = database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!columns.some((column) => column.name === "submission_id")) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN submission_id TEXT`);
+    }
+    database.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_${table}_submission_id
+       ON ${table}(submission_id) WHERE submission_id IS NOT NULL`,
+    );
+  }
 }
 
 function localDate(date = new Date()): string {
@@ -176,6 +187,18 @@ export function get<T>(sql: string, ...params: SQLInputValue[]): T | undefined {
 
 export function run(sql: string, ...params: SQLInputValue[]) {
   return database.prepare(sql).run(...params);
+}
+
+export function transaction<T>(callback: () => T): T {
+  database.exec("BEGIN IMMEDIATE;");
+  try {
+    const result = callback();
+    database.exec("COMMIT;");
+    return result;
+  } catch (error) {
+    database.exec("ROLLBACK;");
+    throw error;
+  }
 }
 
 export { databasePath };

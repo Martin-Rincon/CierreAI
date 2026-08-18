@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:idempotency": "node scripts/verify-idempotency.mjs"
   },
   "dependencies": {
     "next": "latest",

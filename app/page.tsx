@@ -1,5 +1,8 @@
-import { obtenerResumenCierreActual } from "@/lib/data";
-import type { MedioPago } from "@/lib/types";
+import { randomUUID } from "node:crypto";
+import { obtenerMovimientosDelDia, obtenerResumenCierreActual } from "@/lib/data";
+import type { MedioPago, MovimientoDia } from "@/lib/types";
+import { cargarGasto, cargarPago, cargarVenta, guardarEfectivoContado } from "./actions";
+import { SubmitButton } from "./submit-button";
 
 export const dynamic = "force-dynamic";
 
@@ -32,10 +35,13 @@ function fechaLarga(fecha: string): string {
   }).format(new Date(year, month - 1, day));
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ mensaje?: string }> }) {
   const resumen = obtenerResumenCierreActual();
   const { cierre } = resumen;
+  const movimientos = obtenerMovimientosDelDia(cierre.id);
+  const { mensaje } = await searchParams;
   const concilia = cierre.diferencia === 0;
+  const horaActual = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-5 sm:px-6 lg:px-8">
@@ -114,6 +120,46 @@ export default function DashboardPage() {
         ))}
       </section>
 
+      <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-5 sm:flex sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-950">Carga manual</h2>
+            <p className="mt-1 text-sm text-slate-600">Registrá las operaciones a medida que ocurren.</p>
+          </div>
+          {mensaje && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 sm:mt-0">{mensaje}</p>}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <FormularioMovimiento titulo="Nueva venta" action={cargarVenta} horaActual={horaActual} />
+          <FormularioMovimiento titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
+          <FormularioMovimiento titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
+        </div>
+      </section>
+
+      <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div>
+            <h2 className="font-bold text-slate-950">Efectivo contado</h2>
+            <p className="mt-1 text-sm text-slate-600">Podés cargarlo ahora y editarlo cada vez que vuelvas a contar la caja.</p>
+          </div>
+          <form action={guardarEfectivoContado} className="flex gap-2">
+            <CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" />
+            <SubmitButton idle="Guardar" pending="Guardando…" className="self-end rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700" />
+          </form>
+        </div>
+      </section>
+
+      <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="movimientos-title">
+        <div className="border-b border-slate-100 p-5">
+          <h2 id="movimientos-title" className="text-xl font-bold text-slate-950">Movimientos del día</h2>
+          <p className="mt-1 text-sm text-slate-600">{movimientos.length} movimientos, ordenados del más reciente al más antiguo.</p>
+        </div>
+        {movimientos.length === 0 ? <p className="p-5 text-sm text-slate-500">Todavía no hay movimientos cargados.</p> : (
+          <ul className="divide-y divide-slate-100">
+            {movimientos.map((movimiento) => <Movimiento key={`${movimiento.tipo}-${movimiento.id}`} movimiento={movimiento} />)}
+          </ul>
+        )}
+      </section>
+
       {!resumen.tieneMovimientos ? (
         <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-center">
           <h2 className="font-bold text-blue-950">Todavía no cargaste movimientos</h2>
@@ -163,6 +209,36 @@ export default function DashboardPage() {
       </section>
     </main>
   );
+}
+
+function FormularioMovimiento({ titulo, action, horaActual, gasto = false }: { titulo: string; action: (formData: FormData) => Promise<never>; horaActual: string; gasto?: boolean }) {
+  return (
+    <form action={action} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <input type="hidden" name="submission_id" value={randomUUID()} />
+      <h3 className="mb-3 font-bold text-slate-900">{titulo}</h3>
+      <div className="space-y-3">
+        <CampoMonto label="Monto" />
+        {gasto && <><Campo label="Categoría" name="categoria" required /><Campo label="Descripción (opcional)" name="descripcion" /></>}
+        <label className="block text-xs font-bold text-slate-600">Medio de pago<select name="medio_pago" required className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="mercado_pago">Mercado Pago</option></select></label>
+        <label className="block text-xs font-bold text-slate-600">Hora<input type="time" name="hora" required defaultValue={horaActual} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>
+        <SubmitButton idle="Cargar" pending="Cargando…" className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700" />
+      </div>
+    </form>
+  );
+}
+
+function CampoMonto({ label, defaultValue }: { label: string; defaultValue?: string }) {
+  return <label className="block text-xs font-bold text-slate-600">{label}<span className="relative mt-1 block"><span className="absolute left-3 top-2.5 text-sm text-slate-500">$</span><input name="monto" inputMode="decimal" required pattern="[0-9]+([,.][0-9]{1,2})?" defaultValue={defaultValue} placeholder="0,00" className="block w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-7 pr-3 text-sm" /></span></label>;
+}
+
+function Campo({ label, name, required = false }: { label: string; name: string; required?: boolean }) {
+  return <label className="block text-xs font-bold text-slate-600">{label}<input name={name} required={required} maxLength={100} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>;
+}
+
+function Movimiento({ movimiento }: { movimiento: MovimientoDia }) {
+  const tipo = movimiento.tipo === "venta" ? "Venta" : movimiento.tipo === "gasto" ? "Gasto" : "Pago recibido";
+  const signo = movimiento.tipo === "gasto" ? "−" : "+";
+  return <li className="flex items-center gap-3 px-5 py-3.5"><time className="w-12 text-sm tabular-nums text-slate-500">{movimiento.hora}</time><div className="min-w-0 flex-1"><p className="font-semibold text-slate-900">{tipo}</p><p className="truncate text-xs text-slate-500">{movimiento.detalle} · {etiquetasMedio[movimiento.medioPago]}</p></div><p className={`font-bold tabular-nums ${movimiento.tipo === "gasto" ? "text-red-600" : "text-slate-900"}`}>{signo}{pesos(movimiento.monto)}</p></li>;
 }
 
 function Total({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" | "danger" }) {
