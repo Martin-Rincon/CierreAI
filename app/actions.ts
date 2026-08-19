@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { run, transaction } from "@/lib/db";
-import { obtenerOCrearCierreActual } from "@/lib/data";
+import { cambiarEstadoCausa, ejecutarConciliacion, obtenerOCrearCierreActual } from "@/lib/data";
 import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
 
 function texto(formData: FormData, campo: string): string {
@@ -51,6 +51,7 @@ function actualizarTotales(cierreId: number): void {
     cierreId, cierreId, cierreId, cierreId,
   );
   run("UPDATE cierres SET diferencia = total_registrado - total_esperado WHERE id = ?", cierreId);
+  run("UPDATE cierres SET analizado = 0, estado = CASE WHEN diferencia = 0 THEN 'conciliado' ELSE 'con_diferencia' END WHERE id = ?", cierreId);
 }
 
 function finalizar(mensaje: string): never {
@@ -94,4 +95,19 @@ export async function guardarEfectivoContado(formData: FormData): Promise<never>
     actualizarTotales(cierre.id);
   });
   finalizar("Efectivo contado guardado");
+}
+
+export async function analizarDiferencia(cierreId: number): Promise<void> {
+  ejecutarConciliacion(cierreId);
+  revalidatePath("/");
+}
+
+export async function confirmarCausa(formData: FormData): Promise<void> {
+  cambiarEstadoCausa(Number(formData.get("causa_id")), "confirmada");
+  revalidatePath("/");
+}
+
+export async function descartarCausa(formData: FormData): Promise<void> {
+  cambiarEstadoCausa(Number(formData.get("causa_id")), "descartada");
+  revalidatePath("/");
 }

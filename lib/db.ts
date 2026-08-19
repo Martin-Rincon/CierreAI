@@ -113,6 +113,34 @@ function migrate(): void {
        ON ${table}(submission_id) WHERE submission_id IS NOT NULL`,
     );
   }
+
+  const cierreColumns = database.prepare("PRAGMA table_info(cierres)").all() as { name: string }[];
+  if (!cierreColumns.some((column) => column.name === "analizado")) {
+    database.exec("ALTER TABLE cierres ADD COLUMN analizado INTEGER NOT NULL DEFAULT 0 CHECK (analizado IN (0, 1))");
+  }
+
+  const causaColumns = database.prepare("PRAGMA table_info(causas_candidatas)").all() as { name: string }[];
+  if (!causaColumns.some((column) => column.name === "efecto")) {
+    database.exec("ALTER TABLE causas_candidatas ADD COLUMN efecto INTEGER NOT NULL DEFAULT 0");
+    database.exec(`
+      UPDATE causas_candidatas SET efecto = CASE tipo
+        WHEN 'venta_sin_pago' THEN -monto
+        WHEN 'pago_sin_venta' THEN monto
+        WHEN 'diferencia_efectivo' THEN (
+          SELECT COALESCE(c.efectivo_contado, 0) - (
+            c.efectivo_inicial
+            + COALESCE((SELECT SUM(v.monto) FROM ventas v WHERE v.cierre_id = c.id AND v.medio_pago = 'efectivo'), 0)
+            - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cierre_id = c.id AND g.medio_pago = 'efectivo'), 0)
+          ) FROM cierres c WHERE c.id = causas_candidatas.cierre_id
+        ) ELSE 0 END
+    `);
+  }
+  database.exec(`
+    UPDATE cierres SET estado = CASE
+      WHEN diferencia = 0 THEN 'conciliado'
+      WHEN COALESCE((SELECT SUM(cc.efecto) FROM causas_candidatas cc WHERE cc.cierre_id = cierres.id AND cc.estado = 'confirmada'), 0) = diferencia THEN 'resuelto'
+      ELSE 'con_diferencia' END
+  `);
 }
 
 function localDate(date = new Date()): string {

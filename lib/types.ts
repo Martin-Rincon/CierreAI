@@ -49,3 +49,21 @@ export interface MovimientoDia {
   hora: string;
   detalle: string;
 }
+
+export type EstadoCausa = "pendiente" | "confirmada" | "descartada";
+
+export interface CausaCandidataVista {
+  id: number;
+  tipo: "venta_sin_pago" | "pago_sin_venta" | "diferencia_efectivo";
+  referenciaTipo: "venta" | "movimiento_pago" | null;
+  referenciaId: number | null;
+  monto: number;
+  efecto: number;
+  estado: EstadoCausa;
+  medioPago: MedioPago | null;
+  hora: string | null;
+  esPrincipal: boolean;
+  explicacionExacta: boolean;
+  efectivoEsperado: number | null;
+  efectivoContado: number | null;
+}

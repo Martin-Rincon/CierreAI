@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:idempotency": "node scripts/verify-idempotency.mjs"
+    "test:idempotency": "node scripts/verify-idempotency.mjs",
+    "test:conciliacion": "node --experimental-strip-types scripts/test-conciliacion.ts"
   },
   "dependencies": {
     "next": "latest",

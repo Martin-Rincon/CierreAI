@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { obtenerMovimientosDelDia, obtenerResumenCierreActual } from "@/lib/data";
-import type { MedioPago, MovimientoDia } from "@/lib/types";
-import { cargarGasto, cargarPago, cargarVenta, guardarEfectivoContado } from "./actions";
+import { cierreFueAnalizado, fechaLocal, obtenerCausasCandidatas, obtenerFechasDeCierres, obtenerMovimientosDelDia, obtenerResumenCierreActual, obtenerResumenCierrePorFecha } from "@/lib/data";
+import type { CausaCandidataVista, MedioPago, MovimientoDia } from "@/lib/types";
+import { cargarGasto, cargarPago, cargarVenta, confirmarCausa, descartarCausa, guardarEfectivoContado } from "./actions";
+import { AnalysisButton } from "./analysis-button";
 import { SubmitButton } from "./submit-button";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,10 @@ function pesos(centavos: number): string {
   }).format(centavos / 100);
 }
 
+function pesosConSigno(centavos: number): string {
+  return `${centavos >= 0 ? "+" : "−"}${pesos(Math.abs(centavos))}`;
+}
+
 function fechaLarga(fecha: string): string {
   const [year, month, day] = fecha.split("-").map(Number);
   return new Intl.DateTimeFormat("es-AR", {
@@ -35,12 +40,20 @@ function fechaLarga(fecha: string): string {
   }).format(new Date(year, month - 1, day));
 }
 
-export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ mensaje?: string }> }) {
-  const resumen = obtenerResumenCierreActual();
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ mensaje?: string; fecha?: string }> }) {
+  const parametros = await searchParams;
+  const hoy = fechaLocal();
+  const fechaSeleccionada = /^\d{4}-\d{2}-\d{2}$/.test(parametros.fecha ?? "") ? parametros.fecha! : hoy;
+  const fechas = obtenerFechasDeCierres();
+  const resumen = fechaSeleccionada === hoy ? obtenerResumenCierreActual() : obtenerResumenCierrePorFecha(fechaSeleccionada);
+  if (!resumen) return <DashboardVacio fecha={fechaSeleccionada} fechas={fechas} />;
   const { cierre } = resumen;
   const movimientos = obtenerMovimientosDelDia(cierre.id);
-  const { mensaje } = await searchParams;
+  const causas = obtenerCausasCandidatas(cierre.id, cierre.diferencia);
+  const analizado = cierreFueAnalizado(cierre.id);
+  const { mensaje } = parametros;
   const concilia = cierre.diferencia === 0;
+  const resuelto = cierre.estado === "resuelto";
   const horaActual = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
@@ -56,9 +69,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           </div>
         </div>
         <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm">
-          Hoy
+          {fechaSeleccionada === hoy ? "Hoy" : "Histórico"}
         </span>
       </header>
+
+      <SelectorFecha fecha={fechaSeleccionada} fechas={fechas} />
 
       <section className="mb-6">
         <p className="mb-1 text-sm font-semibold capitalize text-blue-700">
@@ -81,7 +96,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <Total
           label="Diferencia"
           value={pesos(cierre.diferencia)}
-          tone={concilia ? "success" : "danger"}
+          tone={concilia || resuelto ? "success" : "danger"}
         />
       </section>
 
@@ -120,7 +135,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         ))}
       </section>
 
-      <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {fechaSeleccionada === hoy ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 sm:flex sm:items-end sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-950">Carga manual</h2>
@@ -133,9 +148,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <FormularioMovimiento titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
           <FormularioMovimiento titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
         </div>
-      </section>
+      </section> : <section className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Estás viendo un cierre histórico. Sus movimientos se muestran en modo consulta.</section>}
 
-      <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {fechaSeleccionada === hoy && <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
             <h2 className="font-bold text-slate-950">Efectivo contado</h2>
@@ -146,7 +161,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <SubmitButton idle="Guardar" pending="Guardando…" className="self-end rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700" />
           </form>
         </div>
-      </section>
+      </section>}
 
       <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="movimientos-title">
         <div className="border-b border-slate-100 p-5">
@@ -178,6 +193,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <p className="mt-0.5 text-sm text-emerald-800">No hay diferencias para revisar.</p>
           </div>
         </section>
+      ) : resuelto ? (
+        <section className="flex items-center gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+          <div className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-600 text-white"><CheckIcon /></div>
+          <div><h2 className="font-bold text-emerald-950">Diferencia explicada</h2><p className="mt-0.5 text-sm text-emerald-800">Las causas confirmadas explican exactamente la diferencia de {pesos(cierre.diferencia)}.</p></div>
+        </section>
       ) : (
         <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm sm:flex sm:items-center sm:justify-between sm:gap-6">
           <div className="flex gap-4">
@@ -191,16 +211,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            disabled
-            title="Disponible en la etapa de conciliación"
-            className="mt-5 w-full cursor-not-allowed rounded-xl bg-blue-600 px-5 py-3.5 text-sm font-bold text-white opacity-60 sm:mt-0 sm:w-auto"
-          >
-            Analizar diferencia
-          </button>
+          <AnalysisButton cierreId={cierre.id} />
         </section>
       )}
+
+      {analizado && (causas.length > 0 ? <ResultadoAnalisis causas={causas} diferencia={cierre.diferencia} resuelto={resuelto} /> : <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">Análisis completado</h2><p className="mt-1 text-sm text-slate-600">No se encontraron causas candidatas con los criterios determinísticos disponibles.</p></section>)}
 
       <section className="mt-5 grid grid-cols-3 gap-2" aria-label="Actividad del día">
         <Count label="Ventas" value={resumen.cantidadVentas} />
@@ -209,6 +224,50 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </section>
     </main>
   );
+}
+
+function SelectorFecha({ fecha, fechas }: { fecha: string; fechas: string[] }) {
+  return <form method="get" className="mb-6 flex flex-wrap items-end gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <label className="block flex-1 text-xs font-bold text-slate-600">Fecha del cierre<input type="date" name="fecha" defaultValue={fecha} list="fechas-existentes" className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>
+    <datalist id="fechas-existentes">{fechas.map((item) => <option key={item} value={item} />)}</datalist>
+    <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700">Ver cierre</button>
+  </form>;
+}
+
+function DashboardVacio({ fecha, fechas }: { fecha: string; fechas: string[] }) {
+  return <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-5 sm:px-6 lg:px-8">
+    <header className="mb-7 flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><MarkIcon /></div><div><p className="text-xl font-bold text-slate-950">CierreAI</p><p className="text-xs text-slate-500">Control de caja</p></div></header>
+    <SelectorFecha fecha={fecha} fechas={fechas} />
+    <section className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm"><h1 className="text-xl font-bold text-slate-950">No existe un cierre para esta fecha</h1><p className="mt-2 text-sm text-slate-600">No se creó ningún registro al navegar a {fecha}. Elegí otra fecha para consultar un cierre existente.</p></section>
+  </main>;
+}
+
+function ResultadoAnalisis({ causas, diferencia, resuelto }: { causas: CausaCandidataVista[]; diferencia: number; resuelto: boolean }) {
+  const principal = causas.find((causa) => causa.esPrincipal) ?? causas[0];
+  const ordenadas = [principal, ...causas.filter((causa) => causa.id !== principal.id)];
+  return <section className="mt-5 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm" aria-labelledby="resultado-title">
+    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Resultado del análisis</p>
+    <h2 id="resultado-title" className="mt-1 text-xl font-bold text-slate-950">Posible causa encontrada</h2>
+    <p className={`mt-2 text-sm ${resuelto ? "text-emerald-800" : "text-amber-800"}`}>{resuelto ? "Las causas confirmadas explican completamente la diferencia del cierre." : "No se encontró una explicación exacta de toda la diferencia. Estas son las causas candidatas disponibles."}</p>
+    <div className="mt-4 space-y-3">{ordenadas.map((causa) => <CausaCard key={causa.id} causa={causa} diferencia={diferencia} />)}</div>
+  </section>;
+}
+
+function CausaCard({ causa, diferencia }: { causa: CausaCandidataVista; diferencia: number }) {
+  const entidad = causa.tipo === "venta_sin_pago" ? `Venta #${causa.referenciaId}` : causa.tipo === "pago_sin_venta" ? `Movimiento de pago #${causa.referenciaId}` : "Efectivo del cierre";
+  const explicacion = causa.tipo === "venta_sin_pago" ? "Esta venta no tiene un movimiento de pago correspondiente." : causa.tipo === "pago_sin_venta" ? "Este pago no tiene una venta correspondiente." : "El efectivo esperado no coincide con el efectivo contado.";
+  return <article className={`rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-300 bg-amber-50/50" : "border-slate-200"}`}>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{causa.estado}</span></div>
+    <p className="mt-3 text-sm text-slate-700">{explicacion} <strong>Efecto sobre el cierre: {pesosConSigno(causa.efecto)}.</strong></p>
+    <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-sm"><summary className="cursor-pointer font-bold text-blue-700">Ver evidencia</summary><dl className="mt-3 grid gap-2 text-slate-600 sm:grid-cols-2">
+      <div><dt className="font-bold text-slate-800">Entidad analizada</dt><dd>{entidad}</dd></div><div><dt className="font-bold text-slate-800">Monto</dt><dd>{pesos(causa.monto)}</dd></div>
+      <div><dt className="font-bold text-slate-800">Medio y hora</dt><dd>{causa.medioPago ? `${etiquetasMedio[causa.medioPago]} · ${causa.hora}` : "Cálculo global de efectivo"}</dd></div><div><dt className="font-bold text-slate-800">Diferencia general</dt><dd>{pesos(diferencia)}</dd></div>
+      <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Criterio de match</dt><dd>{causa.tipo === "diferencia_efectivo" ? "Efectivo inicial + ventas en efectivo − gastos en efectivo, comparado con efectivo contado." : "Mismo cierre, medio y monto exacto; menor distancia temporal, hora más temprana e id menor."}</dd></div>
+      <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Resultado</dt><dd>{causa.tipo === "diferencia_efectivo" ? "Los totales no coinciden." : "No hubo candidatos compatibles disponibles; no se seleccionó ningún movimiento y quedó sin conciliar."}</dd></div>
+      {causa.tipo === "diferencia_efectivo" && <><div><dt className="font-bold text-slate-800">Efectivo esperado</dt><dd>{causa.efectivoEsperado == null ? "Sin dato" : pesos(causa.efectivoEsperado)}</dd></div><div><dt className="font-bold text-slate-800">Efectivo contado</dt><dd>{causa.efectivoContado == null ? "Sin dato" : pesos(causa.efectivoContado)}</dd></div><div className="sm:col-span-2"><dt className="font-bold text-slate-800">Diferencia de efectivo</dt><dd>{pesosConSigno(causa.efecto)}</dd></div></>}
+    </dl></details>
+    {causa.estado === "pendiente" && <div className="mt-3 flex gap-2"><form action={confirmarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Confirmar causa" pending="Confirmando…" className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white" /></form><form action={descartarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Descartar" pending="Descartando…" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700" /></form></div>}
+  </article>;
 }
 
 function FormularioMovimiento({ titulo, action, horaActual, gasto = false }: { titulo: string; action: (formData: FormData) => Promise<never>; horaActual: string; gasto?: boolean }) {
