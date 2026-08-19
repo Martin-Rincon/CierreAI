@@ -66,4 +66,5 @@ export interface CausaCandidataVista {
   explicacionExacta: boolean;
   efectivoEsperado: number | null;
   efectivoContado: number | null;
+  explicacionIa: string | null;
 }

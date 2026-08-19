@@ -10,7 +10,7 @@ import type {
 } from "@/lib/types";
 
 interface EntidadConciliableRow { id: number; cierre_id: number; monto: number; medio_pago: MedioPago; hora: string }
-interface CausaRow { id: number; tipo: CausaCandidataVista["tipo"]; referencia_tipo: CausaCandidataVista["referenciaTipo"]; referencia_id: number | null; monto: number; efecto: number; estado: CausaCandidataVista["estado"]; medio_pago: MedioPago | null; hora: string | null }
+interface CausaRow { id: number; tipo: CausaCandidataVista["tipo"]; referencia_tipo: CausaCandidataVista["referenciaTipo"]; referencia_id: number | null; monto: number; efecto: number; estado: CausaCandidataVista["estado"]; medio_pago: MedioPago | null; hora: string | null; explicacion_ia: string | null }
 
 interface CierreRow {
   id: number;
@@ -226,7 +226,7 @@ export function cierreFueAnalizado(cierreId: number): boolean {
 
 export function obtenerCausasCandidatas(cierreId: number, diferencia: number): CausaCandidataVista[] {
   const rows = all<CausaRow>(
-    `SELECT c.id, c.tipo, c.referencia_tipo, c.referencia_id, c.monto, c.efecto, c.estado,
+    `SELECT c.id, c.tipo, c.referencia_tipo, c.referencia_id, c.monto, c.efecto, c.estado, c.explicacion_ia,
        COALESCE(v.medio_pago, mp.medio_pago) AS medio_pago,
        COALESCE(v.hora, mp.hora) AS hora
      FROM causas_candidatas c
@@ -251,7 +251,18 @@ export function obtenerCausasCandidatas(cierreId: number, diferencia: number): C
     esPrincipal: row.id === principalId, explicacionExacta: rows.some((item) => item.monto === objetivo),
     efectivoEsperado: row.tipo === "diferencia_efectivo" ? efectivo?.esperado ?? null : null,
     efectivoContado: row.tipo === "diferencia_efectivo" ? efectivo?.contado ?? null : null,
+    explicacionIa: row.explicacion_ia,
   }));
+}
+
+export function guardarExplicacionCausa(causaId: number, explicacion: string): void {
+  run("UPDATE causas_candidatas SET explicacion_ia = ? WHERE id = ?", explicacion, causaId);
+}
+
+export function obtenerDiferenciaCierre(cierreId: number): number {
+  const cierre = get<{ diferencia: number }>("SELECT diferencia FROM cierres WHERE id = ?", cierreId);
+  if (!cierre) throw new Error("El cierre seleccionado no existe.");
+  return cierre.diferencia;
 }
 
 export function cambiarEstadoCausa(causaId: number, estado: "confirmada" | "descartada"): void {

@@ -4,6 +4,8 @@ import type { CausaCandidataVista, MedioPago, MovimientoDia } from "@/lib/types"
 import { cargarGasto, cargarPago, cargarVenta, confirmarCausa, descartarCausa, guardarEfectivoContado } from "./actions";
 import { AnalysisButton } from "./analysis-button";
 import { SubmitButton } from "./submit-button";
+import { NaturalLanguageInput } from "./natural-language-input";
+import { explicacionDeterministica, iaConfigurada } from "@/lib/ia";
 
 export const dynamic = "force-dynamic";
 
@@ -135,6 +137,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         ))}
       </section>
 
+      {fechaSeleccionada === hoy && <NaturalLanguageInput configurada={iaConfigurada()} />}
+
       {fechaSeleccionada === hoy ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 sm:flex sm:items-end sm:justify-between">
           <div>
@@ -255,7 +259,7 @@ function ResultadoAnalisis({ causas, diferencia, resuelto }: { causas: CausaCand
 
 function CausaCard({ causa, diferencia }: { causa: CausaCandidataVista; diferencia: number }) {
   const entidad = causa.tipo === "venta_sin_pago" ? `Venta #${causa.referenciaId}` : causa.tipo === "pago_sin_venta" ? `Movimiento de pago #${causa.referenciaId}` : "Efectivo del cierre";
-  const explicacion = causa.tipo === "venta_sin_pago" ? "Esta venta no tiene un movimiento de pago correspondiente." : causa.tipo === "pago_sin_venta" ? "Este pago no tiene una venta correspondiente." : "El efectivo esperado no coincide con el efectivo contado.";
+  const explicacion = causa.explicacionIa ?? explicacionDeterministica(causa);
   return <article className={`rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-300 bg-amber-50/50" : "border-slate-200"}`}>
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{causa.estado}</span></div>
     <p className="mt-3 text-sm text-slate-700">{explicacion} <strong>Efecto sobre el cierre: {pesosConSigno(causa.efecto)}.</strong></p>
