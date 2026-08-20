@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { run, transaction } from "@/lib/db";
+import { run, transaction, type DbExecutor } from "@/lib/db";
 import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerDiferenciaCierre, obtenerOCrearCierreActual } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
 import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
@@ -40,8 +40,8 @@ function submissionId(formData: FormData): string {
   return valor;
 }
 
-function actualizarTotales(cierreId: number): void {
-  run(
+async function actualizarTotales(cierreId: number, executor: DbExecutor): Promise<void> {
+  await run(
     `UPDATE cierres SET
       total_esperado = efectivo_inicial
         + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ?), 0)
@@ -49,10 +49,10 @@ function actualizarTotales(cierreId: number): void {
       total_registrado = COALESCE(efectivo_contado, 0)
         + COALESCE((SELECT SUM(monto) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo'), 0)
     WHERE id = ?`,
-    cierreId, cierreId, cierreId, cierreId,
+    [cierreId, cierreId, cierreId, cierreId], executor,
   );
-  run("UPDATE cierres SET diferencia = total_registrado - total_esperado WHERE id = ?", cierreId);
-  run("UPDATE cierres SET analizado = 0, estado = CASE WHEN diferencia = 0 THEN 'conciliado' ELSE 'con_diferencia' END WHERE id = ?", cierreId);
+  await run("UPDATE cierres SET diferencia = total_registrado - total_esperado WHERE id = ?", [cierreId], executor);
+  await run("UPDATE cierres SET analizado = 0, estado = CASE WHEN diferencia = 0 THEN 'conciliado' ELSE 'con_diferencia' END WHERE id = ?", [cierreId], executor);
 }
 
 function finalizar(mensaje: string): never {
@@ -60,55 +60,55 @@ function finalizar(mensaje: string): never {
   redirect(`/?mensaje=${encodeURIComponent(mensaje)}#carga`);
 }
 
-function guardarMovimiento(movimiento: MovimientoInterpretado, submission: string, metodo: "ia" | "formulario"): void {
-  const cierre = obtenerOCrearCierreActual();
-  transaction(() => {
+async function guardarMovimiento(movimiento: MovimientoInterpretado, submission: string, metodo: "ia" | "formulario"): Promise<void> {
+  await transaction(async (tx) => {
+    const cierre = await obtenerOCrearCierreActual(tx);
     if (movimiento.tipo === "venta") {
-      run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission);
+      await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
     } else if (movimiento.tipo === "gasto") {
-      run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", cierre.id, movimiento.monto_centavos, movimiento.categoria, movimiento.descripcion ?? "", movimiento.medio_pago, movimiento.hora, metodo, submission);
+      await run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.categoria, movimiento.descripcion ?? "", movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
     } else {
-      run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission);
+      await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
     }
-    actualizarTotales(cierre.id);
+    await actualizarTotales(cierre.id, tx);
   });
 }
 
 export async function cargarVenta(formData: FormData): Promise<never> {
-  guardarMovimiento({ tipo: "venta", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
+  await guardarMovimiento({ tipo: "venta", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
   finalizar("Venta cargada");
 }
 
 export async function cargarGasto(formData: FormData): Promise<never> {
   const categoria = texto(formData, "categoria");
   if (!categoria) throw new Error("Ingresá la categoría del gasto.");
-  guardarMovimiento({ tipo: "gasto", monto_centavos: monto(formData), categoria, descripcion: texto(formData, "descripcion"), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
+  await guardarMovimiento({ tipo: "gasto", monto_centavos: monto(formData), categoria, descripcion: texto(formData, "descripcion"), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
   finalizar("Gasto cargado");
 }
 
 export async function cargarPago(formData: FormData): Promise<never> {
-  guardarMovimiento({ tipo: "pago_recibido", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
+  await guardarMovimiento({ tipo: "pago_recibido", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
   finalizar("Pago recibido cargado");
 }
 
 export async function guardarEfectivoContado(formData: FormData): Promise<never> {
-  const cierre = obtenerOCrearCierreActual();
-  transaction(() => {
-    run("UPDATE cierres SET efectivo_contado = ? WHERE id = ?", monto(formData), cierre.id);
-    actualizarTotales(cierre.id);
+  await transaction(async (tx) => {
+    const cierre = await obtenerOCrearCierreActual(tx);
+    await run("UPDATE cierres SET efectivo_contado = ? WHERE id = ?", [monto(formData), cierre.id], tx);
+    await actualizarTotales(cierre.id, tx);
   });
   finalizar("Efectivo contado guardado");
 }
 
 export async function analizarDiferencia(cierreId: number): Promise<void> {
-  ejecutarConciliacion(cierreId);
-  const diferenciaGeneral = obtenerDiferenciaCierre(cierreId);
-  const cierre = obtenerCausasCandidatas(cierreId, diferenciaGeneral);
+  await ejecutarConciliacion(cierreId);
+  const diferenciaGeneral = await obtenerDiferenciaCierre(cierreId);
+  const cierre = await obtenerCausasCandidatas(cierreId, diferenciaGeneral);
   await Promise.all(cierre.filter((causa) => causa.estado === "pendiente").map(async (causa) => {
     const criterioMatch = causa.tipo === "diferencia_efectivo" ? "Efectivo esperado comparado con efectivo contado" : "Mismo cierre, medio y monto exacto; menor distancia temporal";
     const resultadoAlgoritmo = causa.tipo === "diferencia_efectivo" ? "Los totales de efectivo no coinciden" : "No se encontró un movimiento compatible";
     const explicacion = await explicarCausa({ diferenciaGeneralCentavos: diferenciaGeneral, tipo: causa.tipo, entidad: causa.referenciaTipo ? `${causa.referenciaTipo} #${causa.referenciaId}` : "efectivo del cierre", montoCentavos: causa.monto, medio: causa.medioPago, hora: causa.hora, efectoCentavos: causa.efecto, criterioMatch, resultadoAlgoritmo });
-    guardarExplicacionCausa(causa.id, explicacion);
+    await guardarExplicacionCausa(causa.id, explicacion);
   }));
   revalidatePath("/");
 }
@@ -121,21 +121,21 @@ export async function confirmarMovimientoIa(formData: FormData): Promise<never> 
   let bruto: unknown;
   try { bruto = JSON.parse(texto(formData, "movimiento")); } catch { throw new Error("La interpretación no es válida."); }
   const movimiento = validarMovimientoInterpretado(bruto);
-  guardarMovimiento(movimiento, submissionId(formData), "ia");
+  await guardarMovimiento(movimiento, submissionId(formData), "ia");
   finalizar("Movimiento interpretado y guardado");
 }
 
 export async function confirmarCausa(formData: FormData): Promise<void> {
-  cambiarEstadoCausa(Number(formData.get("causa_id")), "confirmada");
+  await cambiarEstadoCausa(Number(formData.get("causa_id")), "confirmada");
   revalidatePath("/");
 }
 
 export async function descartarCausa(formData: FormData): Promise<void> {
-  cambiarEstadoCausa(Number(formData.get("causa_id")), "descartada");
+  await cambiarEstadoCausa(Number(formData.get("causa_id")), "descartada");
   revalidatePath("/");
 }
 
 export async function cargarEscenarioDemo(confirmarReemplazo: boolean): Promise<void> {
-  cargarDatosEscenarioDemo(confirmarReemplazo);
+  await cargarDatosEscenarioDemo(confirmarReemplazo);
   revalidatePath("/");
 }

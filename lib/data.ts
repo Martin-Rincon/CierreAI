@@ -1,5 +1,5 @@
 import { conciliarCierre, determinarEstadoCierre, type GastoConciliable, type MovimientoPagoConciliable, type VentaConciliable } from "@/lib/conciliacion";
-import { all, get, run, transaction } from "@/lib/db";
+import { all, get, run, transaction, type DbExecutor } from "@/lib/db";
 import type {
   CausaCandidataVista,
   Cierre,
@@ -54,35 +54,35 @@ export function fechaLocal(): string {
   return `${year}-${month}-${day}`;
 }
 
-export function obtenerOCrearCierreActual(): CierreRow {
+export async function obtenerOCrearCierreActual(executor?: DbExecutor): Promise<CierreRow> {
   const fecha = fechaLocal();
-  let cierre = get<CierreRow>("SELECT * FROM cierres WHERE fecha = ?", fecha);
+  let cierre = await get<CierreRow>("SELECT * FROM cierres WHERE fecha = ?", [fecha], executor);
   if (!cierre) {
-    run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES (?, 0)", fecha);
-    cierre = get<CierreRow>("SELECT * FROM cierres WHERE fecha = ?", fecha);
+    await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES (?, 0) ON CONFLICT(fecha) DO NOTHING", [fecha], executor);
+    cierre = await get<CierreRow>("SELECT * FROM cierres WHERE fecha = ?", [fecha], executor);
   }
   if (!cierre) throw new Error("No se pudo crear el cierre del día actual.");
   return cierre;
 }
 
-export function obtenerResumenCierreActual(): ResumenCierre {
-  const row = obtenerOCrearCierreActual();
+export async function obtenerResumenCierreActual(): Promise<ResumenCierre> {
+  const row = await obtenerOCrearCierreActual();
 
   return construirResumen(row);
 }
 
-export function obtenerResumenCierrePorFecha(fecha: string): ResumenCierre | null {
-  const row = get<CierreRow>("SELECT * FROM cierres WHERE fecha = ?", fecha);
+export async function obtenerResumenCierrePorFecha(fecha: string): Promise<ResumenCierre | null> {
+  const row = await get<CierreRow>("SELECT * FROM cierres WHERE fecha = ?", [fecha]);
   return row ? construirResumen(row) : null;
 }
 
-export function obtenerFechasDeCierres(): string[] {
-  return all<{ fecha: string }>("SELECT fecha FROM cierres ORDER BY fecha DESC").map((row) => row.fecha);
+export async function obtenerFechasDeCierres(): Promise<string[]> {
+  return (await all<{ fecha: string }>("SELECT fecha FROM cierres ORDER BY fecha DESC")).map((row) => row.fecha);
 }
 
-function construirResumen(row: CierreRow): ResumenCierre {
+async function construirResumen(row: CierreRow): Promise<ResumenCierre> {
 
-  const totales = get<TotalesRow>(
+  const totales = await get<TotalesRow>(
     `
       SELECT
         COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ? AND medio_pago = 'efectivo'), 0) AS ventas_efectivo,
@@ -97,17 +97,7 @@ function construirResumen(row: CierreRow): ResumenCierre {
         (SELECT COUNT(*) FROM gastos WHERE cierre_id = ?) AS cantidad_gastos,
         (SELECT COUNT(*) FROM movimientos_pago WHERE cierre_id = ?) AS cantidad_pagos
     `,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
-    row.id,
+    [row.id, row.id, row.id, row.id, row.id, row.id, row.id, row.id, row.id, row.id, row.id],
   );
 
   if (!totales) throw new Error("No se pudieron calcular los totales del cierre.");
@@ -149,8 +139,8 @@ function construirResumen(row: CierreRow): ResumenCierre {
   };
 }
 
-export function obtenerMovimientosDelDia(cierreId: number): MovimientoDia[] {
-  const rows = all<MovimientoRow>(
+export async function obtenerMovimientosDelDia(cierreId: number): Promise<MovimientoDia[]> {
+  const rows = await all<MovimientoRow>(
     `SELECT id, 'venta' AS tipo, monto, medio_pago, hora, 'Venta' AS detalle
        FROM ventas WHERE cierre_id = ?
      UNION ALL
@@ -161,7 +151,7 @@ export function obtenerMovimientosDelDia(cierreId: number): MovimientoDia[] {
      SELECT id, 'pago', monto, medio_pago, hora, 'Pago recibido'
        FROM movimientos_pago WHERE cierre_id = ?
      ORDER BY hora DESC, id DESC`,
-    cierreId, cierreId, cierreId,
+    [cierreId, cierreId, cierreId],
   );
   return rows.map((row) => ({
     id: row.id, tipo: row.tipo, monto: row.monto, medioPago: row.medio_pago,
@@ -173,12 +163,12 @@ function mapEntidad(row: EntidadConciliableRow): VentaConciliable {
   return { id: row.id, cierreId: row.cierre_id, monto: row.monto, medioPago: row.medio_pago, hora: row.hora };
 }
 
-export function ejecutarConciliacion(cierreId: number): void {
-  const cierre = get<CierreRow>("SELECT * FROM cierres WHERE id = ?", cierreId);
+export async function ejecutarConciliacion(cierreId: number): Promise<void> {
+  const cierre = await get<CierreRow>("SELECT * FROM cierres WHERE id = ?", [cierreId]);
   if (!cierre) throw new Error("El cierre seleccionado no existe.");
-  const ventas = all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM ventas WHERE cierre_id = ?", cierre.id).map(mapEntidad);
-  const gastos = all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM gastos WHERE cierre_id = ?", cierre.id).map(mapEntidad) as GastoConciliable[];
-  const movimientosPago = all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM movimientos_pago WHERE cierre_id = ?", cierre.id).map(mapEntidad) as MovimientoPagoConciliable[];
+  const ventas = (await all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM ventas WHERE cierre_id = ?", [cierre.id])).map(mapEntidad);
+  const gastos = (await all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM gastos WHERE cierre_id = ?", [cierre.id])).map(mapEntidad) as GastoConciliable[];
+  const movimientosPago = (await all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM movimientos_pago WHERE cierre_id = ?", [cierre.id])).map(mapEntidad) as MovimientoPagoConciliable[];
   const resultado = conciliarCierre({
     cierreId: cierre.id,
     efectivoInicial: cierre.efectivo_inicial,
@@ -188,44 +178,44 @@ export function ejecutarConciliacion(cierreId: number): void {
     movimientosPago,
   });
 
-  transaction(() => {
-    run("UPDATE ventas SET conciliada = 0 WHERE cierre_id = ?", cierre.id);
-    run("UPDATE movimientos_pago SET conciliado = 0 WHERE cierre_id = ?", cierre.id);
+  await transaction(async (tx) => {
+    await run("UPDATE ventas SET conciliada = 0 WHERE cierre_id = ?", [cierre.id], tx);
+    await run("UPDATE movimientos_pago SET conciliado = 0 WHERE cierre_id = ?", [cierre.id], tx);
     for (const match of resultado.matches) {
-      run("UPDATE ventas SET conciliada = 1 WHERE id = ? AND cierre_id = ?", match.venta.id, cierre.id);
-      run("UPDATE movimientos_pago SET conciliado = 1 WHERE id = ? AND cierre_id = ?", match.movimiento.id, cierre.id);
+      await run("UPDATE ventas SET conciliada = 1 WHERE id = ? AND cierre_id = ?", [match.venta.id, cierre.id], tx);
+      await run("UPDATE movimientos_pago SET conciliado = 1 WHERE id = ? AND cierre_id = ?", [match.movimiento.id, cierre.id], tx);
     }
 
-    run("DELETE FROM causas_candidatas WHERE cierre_id = ? AND estado = 'pendiente'", cierre.id);
+    await run("DELETE FROM causas_candidatas WHERE cierre_id = ? AND estado = 'pendiente'", [cierre.id], tx);
     for (const causa of resultado.causasCandidatas) {
-      const existente = get<{ id: number }>(
+      const existente = await get<{ id: number }>(
         `SELECT id FROM causas_candidatas WHERE cierre_id = ? AND tipo = ?
          AND referencia_tipo IS ? AND referencia_id IS ? AND monto = ? AND estado != 'pendiente'`,
-        cierre.id, causa.tipo, causa.referenciaTipo, causa.referenciaId, causa.monto,
+        [cierre.id, causa.tipo, causa.referenciaTipo, causa.referenciaId, causa.monto], tx,
       );
       if (!existente) {
-        run(
+        await run(
           `INSERT INTO causas_candidatas
            (cierre_id, tipo, referencia_tipo, referencia_id, monto, efecto, tipo_match, estado)
            VALUES (?, ?, ?, ?, ?, ?, 'deterministico', 'pendiente')`,
-          cierre.id, causa.tipo, causa.referenciaTipo, causa.referenciaId, causa.monto, causa.efecto,
+          [cierre.id, causa.tipo, causa.referenciaTipo, causa.referenciaId, causa.monto, causa.efecto], tx,
         );
       } else {
-        run("UPDATE causas_candidatas SET efecto = ? WHERE id = ?", causa.efecto, existente.id);
+        await run("UPDATE causas_candidatas SET efecto = ? WHERE id = ?", [causa.efecto, existente.id], tx);
       }
     }
-    const efectos = all<{ efecto: number }>("SELECT efecto FROM causas_candidatas WHERE cierre_id = ? AND estado = 'confirmada'", cierre.id).map((row) => row.efecto);
+    const efectos = (await all<{ efecto: number }>("SELECT efecto FROM causas_candidatas WHERE cierre_id = ? AND estado = 'confirmada'", [cierre.id], tx)).map((row) => row.efecto);
     const estado: EstadoCierre = determinarEstadoCierre(cierre.diferencia, efectos);
-    run("UPDATE cierres SET estado = ?, analizado = 1 WHERE id = ?", estado, cierre.id);
+    await run("UPDATE cierres SET estado = ?, analizado = 1 WHERE id = ?", [estado, cierre.id], tx);
   });
 }
 
-export function cierreFueAnalizado(cierreId: number): boolean {
-  return get<{ analizado: number }>("SELECT analizado FROM cierres WHERE id = ?", cierreId)?.analizado === 1;
+export async function cierreFueAnalizado(cierreId: number): Promise<boolean> {
+  return (await get<{ analizado: number }>("SELECT analizado FROM cierres WHERE id = ?", [cierreId]))?.analizado === 1;
 }
 
-export function obtenerCausasCandidatas(cierreId: number, diferencia: number): CausaCandidataVista[] {
-  const rows = all<CausaRow>(
+export async function obtenerCausasCandidatas(cierreId: number, diferencia: number): Promise<CausaCandidataVista[]> {
+  const rows = await all<CausaRow>(
     `SELECT c.id, c.tipo, c.referencia_tipo, c.referencia_id, c.monto, c.efecto, c.estado, c.explicacion_ia,
        COALESCE(v.medio_pago, mp.medio_pago) AS medio_pago,
        COALESCE(v.hora, mp.hora) AS hora
@@ -234,14 +224,14 @@ export function obtenerCausasCandidatas(cierreId: number, diferencia: number): C
      LEFT JOIN movimientos_pago mp ON c.referencia_tipo = 'movimiento_pago' AND mp.id = c.referencia_id
      WHERE c.cierre_id = ?
      ORDER BY CASE c.estado WHEN 'pendiente' THEN 0 WHEN 'confirmada' THEN 1 ELSE 2 END, c.id`,
-    cierreId,
+    [cierreId],
   );
-  const efectivo = get<{ esperado: number; contado: number | null }>(
+  const efectivo = await get<{ esperado: number; contado: number | null }>(
     `SELECT ci.efectivo_inicial
        + COALESCE((SELECT SUM(v.monto) FROM ventas v WHERE v.cierre_id = ci.id AND v.medio_pago = 'efectivo'), 0)
        - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cierre_id = ci.id AND g.medio_pago = 'efectivo'), 0) AS esperado,
        ci.efectivo_contado AS contado FROM cierres ci WHERE ci.id = ?`,
-    cierreId,
+    [cierreId],
   );
   const principalId = rows.find((row) => row.efecto === diferencia)?.id;
   return rows.map((row) => ({
@@ -254,27 +244,27 @@ export function obtenerCausasCandidatas(cierreId: number, diferencia: number): C
   }));
 }
 
-export function guardarExplicacionCausa(causaId: number, explicacion: string): void {
-  run("UPDATE causas_candidatas SET explicacion_ia = ? WHERE id = ?", explicacion, causaId);
+export async function guardarExplicacionCausa(causaId: number, explicacion: string): Promise<void> {
+  await run("UPDATE causas_candidatas SET explicacion_ia = ? WHERE id = ?", [explicacion, causaId]);
 }
 
-export function obtenerDiferenciaCierre(cierreId: number): number {
-  const cierre = get<{ diferencia: number }>("SELECT diferencia FROM cierres WHERE id = ?", cierreId);
+export async function obtenerDiferenciaCierre(cierreId: number): Promise<number> {
+  const cierre = await get<{ diferencia: number }>("SELECT diferencia FROM cierres WHERE id = ?", [cierreId]);
   if (!cierre) throw new Error("El cierre seleccionado no existe.");
   return cierre.diferencia;
 }
 
-export function cambiarEstadoCausa(causaId: number, estado: "confirmada" | "descartada"): void {
-  const cierre = get<CierreRow>(
+export async function cambiarEstadoCausa(causaId: number, estado: "confirmada" | "descartada"): Promise<void> {
+  const cierre = await get<CierreRow>(
     "SELECT cierres.* FROM cierres JOIN causas_candidatas ON causas_candidatas.cierre_id = cierres.id WHERE causas_candidatas.id = ?",
-    causaId,
+    [causaId],
   );
   if (!cierre) throw new Error("La causa seleccionada no existe.");
-  transaction(() => {
-    run("UPDATE causas_candidatas SET estado = ? WHERE id = ? AND cierre_id = ?", estado, causaId, cierre.id);
-    const efectos = all<{ efecto: number }>("SELECT efecto FROM causas_candidatas WHERE cierre_id = ? AND estado = 'confirmada'", cierre.id).map((row) => row.efecto);
+  await transaction(async (tx) => {
+    await run("UPDATE causas_candidatas SET estado = ? WHERE id = ? AND cierre_id = ?", [estado, causaId, cierre.id], tx);
+    const efectos = (await all<{ efecto: number }>("SELECT efecto FROM causas_candidatas WHERE cierre_id = ? AND estado = 'confirmada'", [cierre.id], tx)).map((row) => row.efecto);
     const nuevoEstado: EstadoCierre = determinarEstadoCierre(cierre.diferencia, efectos);
-    run("UPDATE cierres SET estado = ? WHERE id = ?", nuevoEstado, cierre.id);
+    await run("UPDATE cierres SET estado = ? WHERE id = ?", [nuevoEstado, cierre.id], tx);
   });
 }
 
@@ -293,37 +283,37 @@ export const ESCENARIO_DEMO = {
   ],
 } as const;
 
-export function cargarDatosEscenarioDemo(confirmarReemplazo: boolean): void {
-  const cierre = obtenerOCrearCierreActual();
-  const tieneDatos = get<{ total: number }>(
+export async function cargarDatosEscenarioDemo(confirmarReemplazo: boolean): Promise<void> {
+  const cierre = await obtenerOCrearCierreActual();
+  const tieneDatos = (await get<{ total: number }>(
     `SELECT (SELECT COUNT(*) FROM ventas WHERE cierre_id = ?)
       + (SELECT COUNT(*) FROM gastos WHERE cierre_id = ?)
       + (SELECT COUNT(*) FROM movimientos_pago WHERE cierre_id = ?) AS total`,
-    cierre.id, cierre.id, cierre.id,
-  )?.total;
+    [cierre.id, cierre.id, cierre.id],
+  ))?.total;
   if (tieneDatos && !confirmarReemplazo) {
     throw new Error("El cierre actual ya tiene movimientos. Confirmá antes de reemplazarlos.");
   }
 
-  transaction(() => {
-    run("DELETE FROM causas_candidatas WHERE cierre_id = ?", cierre.id);
-    run("DELETE FROM ventas WHERE cierre_id = ?", cierre.id);
-    run("DELETE FROM gastos WHERE cierre_id = ?", cierre.id);
-    run("DELETE FROM movimientos_pago WHERE cierre_id = ?", cierre.id);
-    run("UPDATE cierres SET efectivo_inicial = 0, efectivo_contado = ?, total_esperado = 0, total_registrado = 0, diferencia = 0, estado = 'pendiente', analizado = 0 WHERE id = ?", ESCENARIO_DEMO.efectivoContado, cierre.id);
+  await transaction(async (tx) => {
+    await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierre.id], tx);
+    await run("DELETE FROM ventas WHERE cierre_id = ?", [cierre.id], tx);
+    await run("DELETE FROM gastos WHERE cierre_id = ?", [cierre.id], tx);
+    await run("DELETE FROM movimientos_pago WHERE cierre_id = ?", [cierre.id], tx);
+    await run("UPDATE cierres SET efectivo_inicial = 0, efectivo_contado = ?, total_esperado = 0, total_registrado = 0, diferencia = 0, estado = 'pendiente', analizado = 0 WHERE id = ?", [ESCENARIO_DEMO.efectivoContado, cierre.id], tx);
     for (const venta of ESCENARIO_DEMO.ventas) {
-      run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", cierre.id, venta.monto, venta.medio, venta.hora);
+      await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", [cierre.id, venta.monto, venta.medio, venta.hora], tx);
     }
     for (const gasto of ESCENARIO_DEMO.gastos) {
-      run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, '', ?, ?, 'formulario')", cierre.id, gasto.monto, gasto.categoria, gasto.medio, gasto.hora);
+      await run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, '', ?, ?, 'formulario')", [cierre.id, gasto.monto, gasto.categoria, gasto.medio, gasto.hora], tx);
     }
     for (const pago of ESCENARIO_DEMO.pagos) {
-      run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", cierre.id, pago.monto, pago.medio, pago.hora);
+      await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", [cierre.id, pago.monto, pago.medio, pago.hora], tx);
     }
-    run(`UPDATE cierres SET
+    await run(`UPDATE cierres SET
       total_esperado = efectivo_inicial + (SELECT COALESCE(SUM(monto), 0) FROM ventas WHERE cierre_id = ?) - (SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE cierre_id = ?),
       total_registrado = efectivo_contado + (SELECT COALESCE(SUM(monto), 0) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo')
-      WHERE id = ?`, cierre.id, cierre.id, cierre.id, cierre.id);
-    run("UPDATE cierres SET diferencia = total_registrado - total_esperado, estado = 'con_diferencia' WHERE id = ?", cierre.id);
+      WHERE id = ?`, [cierre.id, cierre.id, cierre.id, cierre.id], tx);
+    await run("UPDATE cierres SET diferencia = total_registrado - total_esperado, estado = 'con_diferencia' WHERE id = ?", [cierre.id], tx);
   });
 }

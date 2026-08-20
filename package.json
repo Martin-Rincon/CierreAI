@@ -11,12 +11,13 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test:idempotency": "node scripts/verify-idempotency.mjs",
+    "test:idempotency": "node --experimental-strip-types scripts/verify-idempotency.mjs",
     "test:conciliacion": "node --experimental-strip-types scripts/test-conciliacion.ts",
     "test:ia": "node --experimental-strip-types scripts/test-ia.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.45",
+    "@libsql/client": "^0.17.4",
     "ai": "^7.0.68",
     "next": "latest",
     "react": "latest",

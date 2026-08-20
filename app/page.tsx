@@ -47,13 +47,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const parametros = await searchParams;
   const hoy = fechaLocal();
   const fechaSeleccionada = /^\d{4}-\d{2}-\d{2}$/.test(parametros.fecha ?? "") ? parametros.fecha! : hoy;
-  const fechas = obtenerFechasDeCierres();
-  const resumen = fechaSeleccionada === hoy ? obtenerResumenCierreActual() : obtenerResumenCierrePorFecha(fechaSeleccionada);
+  const fechas = await obtenerFechasDeCierres();
+  const resumen = fechaSeleccionada === hoy ? await obtenerResumenCierreActual() : await obtenerResumenCierrePorFecha(fechaSeleccionada);
   if (!resumen) return <DashboardVacio fecha={fechaSeleccionada} fechas={fechas} />;
   const { cierre } = resumen;
-  const movimientos = obtenerMovimientosDelDia(cierre.id);
-  const causas = obtenerCausasCandidatas(cierre.id, cierre.diferencia);
-  const analizado = cierreFueAnalizado(cierre.id);
+  const [movimientos, causas, analizado] = await Promise.all([
+    obtenerMovimientosDelDia(cierre.id),
+    obtenerCausasCandidatas(cierre.id, cierre.diferencia),
+    cierreFueAnalizado(cierre.id),
+  ]);
   const { mensaje } = parametros;
   const concilia = cierre.diferencia === 0;
   const resuelto = cierre.estado === "resuelto";

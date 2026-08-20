@@ -12,11 +12,19 @@ copy .env.example .env.local
 npm run dev
 ```
 
-Abrí `http://localhost:3000`. SQLite se crea en `data/cierreai.db`; ese archivo y `.env.local` están ignorados por Git. La app funciona sin IA. Para habilitarla, configurá solo en el servidor:
+Abrí `http://localhost:3000`. Sin variables de Turso, `@libsql/client` usa automáticamente `file:./data/cierreai.db`. El archivo y `.env.local` están ignorados por Git.
+
+## Desarrollo y producción con Turso
+
+Creá `.env.local` con los datos de tu base remota:
 
 ```dotenv
+TURSO_DATABASE_URL=libsql://nombre-base-organizacion.turso.io
+TURSO_AUTH_TOKEN=tu_token
 GEMINI_API_KEY=tu_clave
 ```
+
+`TURSO_DATABASE_URL` selecciona la base remota. `TURSO_AUTH_TOKEN` autentica la conexión y nunca debe exponerse con `NEXT_PUBLIC_`. `GEMINI_API_KEY` sigue siendo opcional. Al iniciar, la aplicación crea o actualiza el schema necesario.
 
 ## Demo de 2 minutos
 
@@ -27,7 +35,7 @@ GEMINI_API_KEY=tu_clave
 5. Tocá **Confirmar causa** para mostrar **Diferencia explicada** sin ocultar la diferencia original.
 6. Para repetir, tocá **Restablecer escenario demo**.
 
-La demo reemplaza únicamente el cierre actual. Inserta movimientos en SQLite, pero no crea causas, no marca coincidencias y no ejecuta el análisis.
+La demo reemplaza únicamente el cierre actual. Inserta movimientos mediante libSQL, pero no crea causas, no marca coincidencias y no ejecuta el análisis.
 
 ## Verificaciones
 
@@ -42,6 +50,6 @@ npm run test:idempotency
 
 ## Deploy previsto
 
-No se realizó ningún deploy. La implementación usa `node:sqlite` con `data/cierreai.db`. Es adecuada para desarrollo y demo local, pero no como persistencia en Vercel serverless: el sistema de archivos de una función es efímero y las instancias no comparten el archivo.
+No se realizó ningún deploy. Producción requiere una base Turso remota persistente: el fallback `file:` es exclusivamente para desarrollo local, porque el filesystem de Vercel no es persistente.
 
-Antes de publicar hay que confirmar una migración mínima a una base remota apta para serverless. El motor determinístico puede conservarse. Luego se configurará `GEMINI_API_KEY` como variable opcional del proveedor, se ejecutarán todas las verificaciones y se desplegará con runtime Node.js. No versionar secretos ni archivos de `data/`.
+Antes del deploy, configurá `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` y, opcionalmente, `GEMINI_API_KEY` en Vercel. No versionar secretos ni archivos de `data/`.
