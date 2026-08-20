@@ -54,3 +54,5 @@ No se realizó ningún deploy. Producción requiere una base Turso remota persis
 
 Antes del deploy, configurá `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` y, opcionalmente, `GEMINI_API_KEY` en Vercel. No versionar secretos ni archivos de `data/`.
 Deploy de produccion verificado en vercel
+
+Prueba de integracion GitHub-Vercel 2.
