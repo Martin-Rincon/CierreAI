@@ -236,7 +236,6 @@ export function obtenerCausasCandidatas(cierreId: number, diferencia: number): C
      ORDER BY CASE c.estado WHEN 'pendiente' THEN 0 WHEN 'confirmada' THEN 1 ELSE 2 END, c.id`,
     cierreId,
   );
-  const objetivo = Math.abs(diferencia);
   const efectivo = get<{ esperado: number; contado: number | null }>(
     `SELECT ci.efectivo_inicial
        + COALESCE((SELECT SUM(v.monto) FROM ventas v WHERE v.cierre_id = ci.id AND v.medio_pago = 'efectivo'), 0)
@@ -244,11 +243,11 @@ export function obtenerCausasCandidatas(cierreId: number, diferencia: number): C
        ci.efectivo_contado AS contado FROM cierres ci WHERE ci.id = ?`,
     cierreId,
   );
-  const principalId = rows.find((row) => row.monto === objetivo)?.id ?? rows[0]?.id;
+  const principalId = rows.find((row) => row.efecto === diferencia)?.id;
   return rows.map((row) => ({
     id: row.id, tipo: row.tipo, referenciaTipo: row.referencia_tipo, referenciaId: row.referencia_id,
     monto: row.monto, efecto: row.efecto, estado: row.estado, medioPago: row.medio_pago, hora: row.hora,
-    esPrincipal: row.id === principalId, explicacionExacta: rows.some((item) => item.monto === objetivo),
+    esPrincipal: row.id === principalId, explicacionExacta: principalId !== undefined,
     efectivoEsperado: row.tipo === "diferencia_efectivo" ? efectivo?.esperado ?? null : null,
     efectivoContado: row.tipo === "diferencia_efectivo" ? efectivo?.contado ?? null : null,
     explicacionIa: row.explicacion_ia,
@@ -276,5 +275,55 @@ export function cambiarEstadoCausa(causaId: number, estado: "confirmada" | "desc
     const efectos = all<{ efecto: number }>("SELECT efecto FROM causas_candidatas WHERE cierre_id = ? AND estado = 'confirmada'", cierre.id).map((row) => row.efecto);
     const nuevoEstado: EstadoCierre = determinarEstadoCierre(cierre.diferencia, efectos);
     run("UPDATE cierres SET estado = ? WHERE id = ?", nuevoEstado, cierre.id);
+  });
+}
+
+export const ESCENARIO_DEMO = {
+  efectivoContado: 2_550_000,
+  ventas: [
+    { monto: 3_050_000, medio: "efectivo" as const, hora: "10:00" },
+    { monto: 1_600_000, medio: "transferencia" as const, hora: "11:00" },
+    { monto: 930_000, medio: "mercado_pago" as const, hora: "12:00" },
+    { monto: 1_250_000, medio: "mercado_pago" as const, hora: "13:00" },
+  ],
+  gastos: [{ monto: 500_000, medio: "efectivo" as const, hora: "10:30", categoria: "Gasto del día" }],
+  pagos: [
+    { monto: 1_600_000, medio: "transferencia" as const, hora: "11:02" },
+    { monto: 930_000, medio: "mercado_pago" as const, hora: "12:02" },
+  ],
+} as const;
+
+export function cargarDatosEscenarioDemo(confirmarReemplazo: boolean): void {
+  const cierre = obtenerOCrearCierreActual();
+  const tieneDatos = get<{ total: number }>(
+    `SELECT (SELECT COUNT(*) FROM ventas WHERE cierre_id = ?)
+      + (SELECT COUNT(*) FROM gastos WHERE cierre_id = ?)
+      + (SELECT COUNT(*) FROM movimientos_pago WHERE cierre_id = ?) AS total`,
+    cierre.id, cierre.id, cierre.id,
+  )?.total;
+  if (tieneDatos && !confirmarReemplazo) {
+    throw new Error("El cierre actual ya tiene movimientos. Confirmá antes de reemplazarlos.");
+  }
+
+  transaction(() => {
+    run("DELETE FROM causas_candidatas WHERE cierre_id = ?", cierre.id);
+    run("DELETE FROM ventas WHERE cierre_id = ?", cierre.id);
+    run("DELETE FROM gastos WHERE cierre_id = ?", cierre.id);
+    run("DELETE FROM movimientos_pago WHERE cierre_id = ?", cierre.id);
+    run("UPDATE cierres SET efectivo_inicial = 0, efectivo_contado = ?, total_esperado = 0, total_registrado = 0, diferencia = 0, estado = 'pendiente', analizado = 0 WHERE id = ?", ESCENARIO_DEMO.efectivoContado, cierre.id);
+    for (const venta of ESCENARIO_DEMO.ventas) {
+      run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", cierre.id, venta.monto, venta.medio, venta.hora);
+    }
+    for (const gasto of ESCENARIO_DEMO.gastos) {
+      run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, '', ?, ?, 'formulario')", cierre.id, gasto.monto, gasto.categoria, gasto.medio, gasto.hora);
+    }
+    for (const pago of ESCENARIO_DEMO.pagos) {
+      run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", cierre.id, pago.monto, pago.medio, pago.hora);
+    }
+    run(`UPDATE cierres SET
+      total_esperado = efectivo_inicial + (SELECT COALESCE(SUM(monto), 0) FROM ventas WHERE cierre_id = ?) - (SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE cierre_id = ?),
+      total_registrado = efectivo_contado + (SELECT COALESCE(SUM(monto), 0) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo')
+      WHERE id = ?`, cierre.id, cierre.id, cierre.id, cierre.id);
+    run("UPDATE cierres SET diferencia = total_registrado - total_esperado, estado = 'con_diferencia' WHERE id = ?", cierre.id);
   });
 }

@@ -5,6 +5,7 @@ import { cargarGasto, cargarPago, cargarVenta, confirmarCausa, descartarCausa, g
 import { AnalysisButton } from "./analysis-button";
 import { SubmitButton } from "./submit-button";
 import { NaturalLanguageInput } from "./natural-language-input";
+import { DemoControls } from "./demo-controls";
 import { explicacionDeterministica, iaConfigurada } from "@/lib/ia";
 
 export const dynamic = "force-dynamic";
@@ -76,6 +77,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </header>
 
       <SelectorFecha fecha={fechaSeleccionada} fechas={fechas} />
+
+      {fechaSeleccionada === hoy && <DemoControls tieneMovimientos={resumen.tieneMovimientos} />}
 
       <section className="mb-6">
         <p className="mb-1 text-sm font-semibold capitalize text-blue-700">
@@ -160,7 +163,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <h2 className="font-bold text-slate-950">Efectivo contado</h2>
             <p className="mt-1 text-sm text-slate-600">Podés cargarlo ahora y editarlo cada vez que vuelvas a contar la caja.</p>
           </div>
-          <form action={guardarEfectivoContado} className="flex gap-2">
+          <form action={guardarEfectivoContado} className="flex flex-col gap-2 sm:flex-row">
             <CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" />
             <SubmitButton idle="Guardar" pending="Guardando…" className="self-end rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700" />
           </form>
@@ -234,7 +237,7 @@ function SelectorFecha({ fecha, fechas }: { fecha: string; fechas: string[] }) {
   return <form method="get" className="mb-6 flex flex-wrap items-end gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
     <label className="block flex-1 text-xs font-bold text-slate-600">Fecha del cierre<input type="date" name="fecha" defaultValue={fecha} list="fechas-existentes" className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>
     <datalist id="fechas-existentes">{fechas.map((item) => <option key={item} value={item} />)}</datalist>
-    <button type="submit" className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700">Ver cierre</button>
+    <button type="submit" className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto">Ver cierre</button>
   </form>;
 }
 
@@ -247,12 +250,12 @@ function DashboardVacio({ fecha, fechas }: { fecha: string; fechas: string[] }) 
 }
 
 function ResultadoAnalisis({ causas, diferencia, resuelto }: { causas: CausaCandidataVista[]; diferencia: number; resuelto: boolean }) {
-  const principal = causas.find((causa) => causa.esPrincipal) ?? causas[0];
-  const ordenadas = [principal, ...causas.filter((causa) => causa.id !== principal.id)];
+  const principal = causas.find((causa) => causa.esPrincipal);
+  const ordenadas = principal ? [principal, ...causas.filter((causa) => causa.id !== principal.id)] : causas;
   return <section className="mt-5 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm" aria-labelledby="resultado-title">
     <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Resultado del análisis</p>
-    <h2 id="resultado-title" className="mt-1 text-xl font-bold text-slate-950">Posible causa encontrada</h2>
-    <p className={`mt-2 text-sm ${resuelto ? "text-emerald-800" : "text-amber-800"}`}>{resuelto ? "Las causas confirmadas explican completamente la diferencia del cierre." : "No se encontró una explicación exacta de toda la diferencia. Estas son las causas candidatas disponibles."}</p>
+    <h2 id="resultado-title" className="mt-1 text-xl font-bold text-slate-950">{causas.length === 1 ? "Posible causa encontrada" : "Posibles causas encontradas"}</h2>
+    <p className={`mt-2 text-sm ${resuelto ? "text-emerald-800" : "text-amber-800"}`}>{resuelto ? "Las causas confirmadas explican completamente la diferencia del cierre." : principal ? "Una causa posible explica por sí sola toda la diferencia. Revisá la evidencia antes de confirmarla." : "Ninguna causa explica por sí sola toda la diferencia. Revisá todas las posibilidades antes de confirmar."}</p>
     <div className="mt-4 space-y-3">{ordenadas.map((causa) => <CausaCard key={causa.id} causa={causa} diferencia={diferencia} />)}</div>
   </section>;
 }
@@ -260,14 +263,15 @@ function ResultadoAnalisis({ causas, diferencia, resuelto }: { causas: CausaCand
 function CausaCard({ causa, diferencia }: { causa: CausaCandidataVista; diferencia: number }) {
   const entidad = causa.tipo === "venta_sin_pago" ? `Venta #${causa.referenciaId}` : causa.tipo === "pago_sin_venta" ? `Movimiento de pago #${causa.referenciaId}` : "Efectivo del cierre";
   const explicacion = causa.explicacionIa ?? explicacionDeterministica(causa);
-  return <article className={`rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-300 bg-amber-50/50" : "border-slate-200"}`}>
+  return <article className={`min-w-0 rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
+    {causa.esPrincipal && <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800">Explica exactamente la diferencia</p>}
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{causa.estado}</span></div>
     <p className="mt-3 text-sm text-slate-700">{explicacion} <strong>Efecto sobre el cierre: {pesosConSigno(causa.efecto)}.</strong></p>
     <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-sm"><summary className="cursor-pointer font-bold text-blue-700">Ver evidencia</summary><dl className="mt-3 grid gap-2 text-slate-600 sm:grid-cols-2">
       <div><dt className="font-bold text-slate-800">Entidad analizada</dt><dd>{entidad}</dd></div><div><dt className="font-bold text-slate-800">Monto</dt><dd>{pesos(causa.monto)}</dd></div>
       <div><dt className="font-bold text-slate-800">Medio y hora</dt><dd>{causa.medioPago ? `${etiquetasMedio[causa.medioPago]} · ${causa.hora}` : "Cálculo global de efectivo"}</dd></div><div><dt className="font-bold text-slate-800">Diferencia general</dt><dd>{pesos(diferencia)}</dd></div>
-      <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Criterio de match</dt><dd>{causa.tipo === "diferencia_efectivo" ? "Efectivo inicial + ventas en efectivo − gastos en efectivo, comparado con efectivo contado." : "Mismo cierre, medio y monto exacto; menor distancia temporal, hora más temprana e id menor."}</dd></div>
-      <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Resultado</dt><dd>{causa.tipo === "diferencia_efectivo" ? "Los totales no coinciden." : "No hubo candidatos compatibles disponibles; no se seleccionó ningún movimiento y quedó sin conciliar."}</dd></div>
+      <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Criterio de búsqueda</dt><dd>{causa.tipo === "diferencia_efectivo" ? "Efectivo inicial + ventas en efectivo − gastos en efectivo, comparado con efectivo contado." : "Mismo cierre, medio y monto exacto; luego se priorizan la hora más cercana, la más temprana y el registro más antiguo."}</dd></div>
+      <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Resultado de la búsqueda</dt><dd>{causa.tipo === "diferencia_efectivo" ? "El efectivo esperado y el contado no coinciden." : causa.tipo === "venta_sin_pago" ? "No se encontró un pago compatible para esta venta." : "No se encontró una venta compatible para este pago recibido."}</dd></div>
       {causa.tipo === "diferencia_efectivo" && <><div><dt className="font-bold text-slate-800">Efectivo esperado</dt><dd>{causa.efectivoEsperado == null ? "Sin dato" : pesos(causa.efectivoEsperado)}</dd></div><div><dt className="font-bold text-slate-800">Efectivo contado</dt><dd>{causa.efectivoContado == null ? "Sin dato" : pesos(causa.efectivoContado)}</dd></div><div className="sm:col-span-2"><dt className="font-bold text-slate-800">Diferencia de efectivo</dt><dd>{pesosConSigno(causa.efecto)}</dd></div></>}
     </dl></details>
     {causa.estado === "pendiente" && <div className="mt-3 flex gap-2"><form action={confirmarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Confirmar causa" pending="Confirmando…" className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white" /></form><form action={descartarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Descartar" pending="Descartando…" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700" /></form></div>}

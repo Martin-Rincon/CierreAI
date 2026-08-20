@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { run, transaction } from "@/lib/db";
-import { cambiarEstadoCausa, ejecutarConciliacion, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerDiferenciaCierre, obtenerOCrearCierreActual } from "@/lib/data";
+import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerDiferenciaCierre, obtenerOCrearCierreActual } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
 import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
 
@@ -132,5 +132,10 @@ export async function confirmarCausa(formData: FormData): Promise<void> {
 
 export async function descartarCausa(formData: FormData): Promise<void> {
   cambiarEstadoCausa(Number(formData.get("causa_id")), "descartada");
+  revalidatePath("/");
+}
+
+export async function cargarEscenarioDemo(confirmarReemplazo: boolean): Promise<void> {
+  cargarDatosEscenarioDemo(confirmarReemplazo);
   revalidatePath("/");
 }

@@ -143,67 +143,7 @@ function migrate(): void {
   `);
 }
 
-function localDate(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function seedIfEmpty(): void {
-  const row = database.prepare("SELECT COUNT(*) AS total FROM cierres").get() as {
-    total: number;
-  };
-
-  if (row.total > 0) return;
-
-  database.exec("BEGIN IMMEDIATE;");
-  try {
-    const cierreResult = database
-      .prepare(`
-        INSERT INTO cierres (
-          fecha, efectivo_inicial, efectivo_contado,
-          total_esperado, total_registrado, diferencia, estado
-        ) VALUES (?, 2000000, 3050000, 6830000, 5580000, -1250000, 'con_diferencia')
-      `)
-      .run(localDate());
-    const cierreId = Number(cierreResult.lastInsertRowid);
-
-    const insertVenta = database.prepare(`
-      INSERT INTO ventas (cierre_id, monto, medio_pago, hora, conciliada, metodo_carga)
-      VALUES (?, ?, ?, ?, 0, 'formulario')
-    `);
-    insertVenta.run(cierreId, 850000, "efectivo", "10:00");
-    insertVenta.run(cierreId, 1250000, "mercado_pago", "11:15");
-    insertVenta.run(cierreId, 1600000, "transferencia", "13:20");
-    insertVenta.run(cierreId, 700000, "efectivo", "15:00");
-    insertVenta.run(cierreId, 930000, "mercado_pago", "16:45");
-
-    database
-      .prepare(`
-        INSERT INTO gastos (
-          cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga
-        ) VALUES (?, 500000, 'Flete', 'Flete del día', 'efectivo', '14:00', 'formulario')
-      `)
-      .run(cierreId);
-
-    const insertMovimiento = database.prepare(`
-      INSERT INTO movimientos_pago (
-        cierre_id, monto, medio_pago, hora, conciliado, metodo_carga
-      ) VALUES (?, ?, ?, ?, 0, 'formulario')
-    `);
-    insertMovimiento.run(cierreId, 1600000, "transferencia", "13:22");
-    insertMovimiento.run(cierreId, 930000, "mercado_pago", "16:46");
-
-    database.exec("COMMIT;");
-  } catch (error) {
-    database.exec("ROLLBACK;");
-    throw error;
-  }
-}
-
 migrate();
-seedIfEmpty();
 
 export function all<T>(sql: string, ...params: SQLInputValue[]): T[] {
   return database.prepare(sql).all(...params) as T[];

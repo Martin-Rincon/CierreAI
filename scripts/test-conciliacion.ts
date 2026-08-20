@@ -43,3 +43,25 @@ assert.equal(efectivoConSobrante.causasCandidatas[0]?.efecto, 5000, "La diferenc
 assert.equal(conciliarCierre(entrada).causasCandidatas[0]?.efecto, -12500, "La venta sin pago conserva su efecto negativo");
 
 console.log("OK: motor determinístico y 4 casos de resolución firmada superados.");
+
+const demo = conciliarCierre({
+  cierreId: 5, efectivoInicial: 0, efectivoContado: 2_550_000,
+  ventas: [
+    { id: 1, cierreId: 5, monto: 3_050_000, medioPago: "efectivo", hora: "10:00" },
+    { id: 2, cierreId: 5, monto: 1_600_000, medioPago: "transferencia", hora: "11:00" },
+    { id: 3, cierreId: 5, monto: 930_000, medioPago: "mercado_pago", hora: "12:00" },
+    { id: 4, cierreId: 5, monto: 1_250_000, medioPago: "mercado_pago", hora: "13:00" },
+  ],
+  gastos: [{ id: 5, cierreId: 5, monto: 500_000, medioPago: "efectivo", hora: "10:30" }],
+  movimientosPago: [
+    { id: 6, cierreId: 5, monto: 1_600_000, medioPago: "transferencia", hora: "11:02" },
+    { id: 7, cierreId: 5, monto: 930_000, medioPago: "mercado_pago", hora: "12:02" },
+  ],
+});
+assert.equal(demo.diferenciaEfectivo, 0, "Demo: el efectivo debe conciliar");
+assert.equal(demo.matches.length, 2, "Demo: transferencia y Mercado Pago deben conciliar");
+assert.deepEqual(demo.causasCandidatas.map(({ tipo, monto, efecto }) => ({ tipo, monto, efecto })), [
+  { tipo: "venta_sin_pago", monto: 1_250_000, efecto: -1_250_000 },
+], "Demo: solo la venta de $12.500 debe quedar sin pago");
+assert.equal(determinarEstadoCierre(-1_250_000, [demo.causasCandidatas[0].efecto]), "resuelto");
+console.log("OK: escenario demo procesado por el motor normal con diferencia -$12.500.");
