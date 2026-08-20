@@ -53,3 +53,4 @@ npm run test:idempotency
 No se realizó ningún deploy. Producción requiere una base Turso remota persistente: el fallback `file:` es exclusivamente para desarrollo local, porque el filesystem de Vercel no es persistente.
 
 Antes del deploy, configurá `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` y, opcionalmente, `GEMINI_API_KEY` en Vercel. No versionar secretos ni archivos de `data/`.
+Deploy de produccion verificado en vercel
