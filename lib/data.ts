@@ -23,6 +23,7 @@ interface CierreRow {
   diferencia: number;
   estado: EstadoCierre;
   finalizado_at: string | null;
+  es_demo: number;
 }
 
 interface TotalesRow {
@@ -122,6 +123,7 @@ async function construirResumen(row: CierreRow): Promise<ResumenCierre> {
     diferencia: row.diferencia,
     estado: row.estado,
     finalizadoAt: row.finalizado_at,
+    esDemo: row.es_demo === 1,
   };
 
   const efectivoEsperado =
@@ -289,6 +291,12 @@ export async function obtenerCierreEditable(cierreId: number, executor?: DbExecu
   return cierre;
 }
 
+export async function obtenerCierreParaCargaReal(cierreId: number, executor?: DbExecutor): Promise<CierreRow> {
+  const cierre = await obtenerCierreEditable(cierreId, executor);
+  if (cierre.es_demo === 1) throw new Error("Primero elegí Empezar con mis datos para salir del escenario demo.");
+  return cierre;
+}
+
 export async function finalizarCierre(cierreId: number): Promise<void> {
   const cierre = await obtenerCierreEditable(cierreId);
   await run("UPDATE cierres SET finalizado_at = CURRENT_TIMESTAMP WHERE id = ? AND finalizado_at IS NULL", [cierre.id]);
@@ -317,38 +325,65 @@ export const ESCENARIO_DEMO = {
   ],
 } as const;
 
-export async function cargarDatosEscenarioDemo(confirmarReemplazo: boolean): Promise<void> {
-  const cierre = await obtenerOCrearCierreActual();
-  if (cierre.finalizado_at) throw new Error("El cierre está finalizado. Reabrilo para modificarlo.");
-  const tieneDatos = (await get<{ total: number }>(
+async function cantidadDatosCierre(cierreId: number, executor?: DbExecutor): Promise<number> {
+  return Number((await get<{ total: number }>(
     `SELECT (SELECT COUNT(*) FROM ventas WHERE cierre_id = ?)
       + (SELECT COUNT(*) FROM gastos WHERE cierre_id = ?)
-      + (SELECT COUNT(*) FROM movimientos_pago WHERE cierre_id = ?) AS total`,
-    [cierre.id, cierre.id, cierre.id],
-  ))?.total;
-  if (tieneDatos && !confirmarReemplazo) {
-    throw new Error("El cierre actual ya tiene movimientos. Confirmá antes de reemplazarlos.");
-  }
+      + (SELECT COUNT(*) FROM movimientos_pago WHERE cierre_id = ?) AS total`, [cierreId, cierreId, cierreId], executor))?.total ?? 0);
+}
 
-  await transaction(async (tx) => {
-    await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierre.id], tx);
-    await run("DELETE FROM ventas WHERE cierre_id = ?", [cierre.id], tx);
-    await run("DELETE FROM gastos WHERE cierre_id = ?", [cierre.id], tx);
-    await run("DELETE FROM movimientos_pago WHERE cierre_id = ?", [cierre.id], tx);
-    await run("UPDATE cierres SET efectivo_inicial = 0, efectivo_contado = ?, total_esperado = 0, total_registrado = 0, diferencia = 0, estado = 'pendiente', analizado = 0 WHERE id = ?", [ESCENARIO_DEMO.efectivoContado, cierre.id], tx);
+async function escribirEscenarioDemo(cierreId: number, tx: DbExecutor): Promise<void> {
+    await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierreId], tx);
+    await run("DELETE FROM ventas WHERE cierre_id = ?", [cierreId], tx);
+    await run("DELETE FROM gastos WHERE cierre_id = ?", [cierreId], tx);
+    await run("DELETE FROM movimientos_pago WHERE cierre_id = ?", [cierreId], tx);
+    await run("UPDATE cierres SET efectivo_inicial = 0, efectivo_contado = ?, total_esperado = 0, total_registrado = 0, diferencia = 0, estado = 'pendiente', analizado = 0, es_demo = 1 WHERE id = ?", [ESCENARIO_DEMO.efectivoContado, cierreId], tx);
     for (const venta of ESCENARIO_DEMO.ventas) {
-      await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", [cierre.id, venta.monto, venta.medio, venta.hora], tx);
+      await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", [cierreId, venta.monto, venta.medio, venta.hora], tx);
     }
     for (const gasto of ESCENARIO_DEMO.gastos) {
-      await run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, '', ?, ?, 'formulario')", [cierre.id, gasto.monto, gasto.categoria, gasto.medio, gasto.hora], tx);
+      await run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, '', ?, ?, 'formulario')", [cierreId, gasto.monto, gasto.categoria, gasto.medio, gasto.hora], tx);
     }
     for (const pago of ESCENARIO_DEMO.pagos) {
-      await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", [cierre.id, pago.monto, pago.medio, pago.hora], tx);
+      await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'formulario')", [cierreId, pago.monto, pago.medio, pago.hora], tx);
     }
     await run(`UPDATE cierres SET
       total_esperado = efectivo_inicial + (SELECT COALESCE(SUM(monto), 0) FROM ventas WHERE cierre_id = ?) - (SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE cierre_id = ?),
       total_registrado = efectivo_contado + (SELECT COALESCE(SUM(monto), 0) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo')
-      WHERE id = ?`, [cierre.id, cierre.id, cierre.id, cierre.id], tx);
-    await run("UPDATE cierres SET diferencia = total_registrado - total_esperado, estado = 'con_diferencia' WHERE id = ?", [cierre.id], tx);
+      WHERE id = ?`, [cierreId, cierreId, cierreId, cierreId], tx);
+    await run("UPDATE cierres SET diferencia = total_registrado - total_esperado, estado = 'con_diferencia' WHERE id = ?", [cierreId], tx);
+}
+
+export async function cargarDatosEscenarioDemo(cierreId: number): Promise<void> {
+  await transaction(async (tx) => {
+    const cierre = await obtenerCierreEditable(cierreId, tx);
+    if (cierre.es_demo === 1) return;
+    if (await cantidadDatosCierre(cierre.id, tx)) throw new Error("Este cierre ya contiene datos. Para cargar el escenario demo primero tenés que vaciarlo.");
+    await escribirEscenarioDemo(cierre.id, tx);
   });
+}
+
+export async function restablecerDatosEscenarioDemo(cierreId: number): Promise<void> {
+  await transaction(async (tx) => {
+    const cierre = await obtenerCierreEditable(cierreId, tx);
+    if (cierre.es_demo !== 1) throw new Error("Este cierre no está usando el escenario demo.");
+    await escribirEscenarioDemo(cierre.id, tx);
+  });
+}
+
+export async function vaciarDatosCierre(cierreId: number, soloSiDemo = false): Promise<string> {
+  let fecha = "";
+  await transaction(async (tx) => {
+    const cierre = await obtenerCierreEditable(cierreId, tx);
+    if (soloSiDemo && cierre.es_demo !== 1) throw new Error("Este cierre no está usando el escenario demo.");
+    fecha = cierre.fecha;
+    await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierre.id], tx);
+    await run("DELETE FROM ventas WHERE cierre_id = ?", [cierre.id], tx);
+    await run("DELETE FROM gastos WHERE cierre_id = ?", [cierre.id], tx);
+    await run("DELETE FROM movimientos_pago WHERE cierre_id = ?", [cierre.id], tx);
+    await run(`UPDATE cierres SET efectivo_contado = NULL, total_esperado = efectivo_inicial,
+      total_registrado = 0, diferencia = -efectivo_inicial, estado = CASE WHEN efectivo_inicial = 0 THEN 'conciliado' ELSE 'con_diferencia' END,
+      analizado = 0, es_demo = 0 WHERE id = ?`, [cierre.id], tx);
+  });
+  return fecha;
 }

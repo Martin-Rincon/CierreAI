@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { run, transaction, type DbExecutor } from "@/lib/db";
-import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreEditable, obtenerDiferenciaCierre, reabrirCierre } from "@/lib/data";
+import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreParaCargaReal, obtenerDiferenciaCierre, reabrirCierre, restablecerDatosEscenarioDemo, vaciarDatosCierre } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
 import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
 
@@ -69,7 +69,7 @@ function terminarAccion(mensaje: string, fecha: string): never {
 async function guardarMovimiento(id: number, movimiento: MovimientoInterpretado, submission: string, metodo: "ia" | "formulario"): Promise<string> {
   let fecha = "";
   await transaction(async (tx) => {
-    const cierre = await obtenerCierreEditable(id, tx);
+    const cierre = await obtenerCierreParaCargaReal(id, tx);
     fecha = cierre.fecha;
     if (movimiento.tipo === "venta") {
       await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
@@ -103,7 +103,7 @@ export async function cargarPago(formData: FormData): Promise<never> {
 export async function guardarEfectivoContado(formData: FormData): Promise<never> {
   let fecha = "";
   await transaction(async (tx) => {
-    const cierre = await obtenerCierreEditable(cierreId(formData), tx);
+    const cierre = await obtenerCierreParaCargaReal(cierreId(formData), tx);
     fecha = cierre.fecha;
     await run("UPDATE cierres SET efectivo_contado = ? WHERE id = ?", [monto(formData), cierre.id], tx);
     await actualizarTotales(cierre.id, tx);
@@ -156,7 +156,24 @@ export async function descartarCausa(formData: FormData): Promise<void> {
   revalidatePath("/");
 }
 
-export async function cargarEscenarioDemo(confirmarReemplazo: boolean): Promise<void> {
-  await cargarDatosEscenarioDemo(confirmarReemplazo);
+export async function cargarEscenarioDemo(id: number): Promise<void> {
+  await cargarDatosEscenarioDemo(id);
   revalidatePath("/");
+}
+
+export async function restablecerEscenarioDemo(id: number): Promise<void> {
+  await restablecerDatosEscenarioDemo(id);
+  revalidatePath("/");
+}
+
+export async function empezarConMisDatos(id: number): Promise<string> {
+  const fecha = await vaciarDatosCierre(id, true);
+  revalidatePath("/");
+  return fecha;
+}
+
+export async function vaciarCierreSeleccionado(id: number): Promise<string> {
+  const fecha = await vaciarDatosCierre(id);
+  revalidatePath("/");
+  return fecha;
 }

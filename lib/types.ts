@@ -22,6 +22,7 @@ export interface Cierre {
   diferencia: number;
   estado: EstadoCierre;
   finalizadoAt: string | null;
+  esDemo: boolean;
 }
 
 export interface CierreListado {

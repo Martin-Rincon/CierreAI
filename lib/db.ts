@@ -108,6 +108,9 @@ async function migrate(): Promise<void> {
   if (!(await columns("cierres")).includes("finalizado_at")) {
     await client.execute("ALTER TABLE cierres ADD COLUMN finalizado_at TEXT");
   }
+  if (!(await columns("cierres")).includes("es_demo")) {
+    await client.execute("ALTER TABLE cierres ADD COLUMN es_demo INTEGER NOT NULL DEFAULT 0 CHECK (es_demo IN (0, 1))");
+  }
   if (!(await columns("causas_candidatas")).includes("efecto")) {
     await client.execute("ALTER TABLE causas_candidatas ADD COLUMN efecto INTEGER NOT NULL DEFAULT 0");
     await client.execute(`UPDATE causas_candidatas SET efecto = CASE tipo

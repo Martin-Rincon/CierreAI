@@ -14,7 +14,8 @@
     "test:idempotency": "node --experimental-strip-types scripts/verify-idempotency.mjs",
     "test:conciliacion": "node --experimental-strip-types scripts/test-conciliacion.ts",
     "test:ia": "node --experimental-strip-types scripts/test-ia.ts",
-    "test:lifecycle": "node --experimental-strip-types scripts/test-lifecycle.ts"
+    "test:lifecycle": "node --experimental-strip-types scripts/test-lifecycle.ts",
+    "test:demo-mode": "node --experimental-strip-types scripts/test-demo-mode.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.45",

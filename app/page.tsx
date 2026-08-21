@@ -97,7 +97,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       {pendientes.length > 0 && <AvisoPendiente pendientes={pendientes} />}
       <SelectorFecha fecha={fechaSeleccionada} cierres={cierresHistoricos} />
 
-      {fechaSeleccionada === hoy && editable && <DemoControls tieneMovimientos={resumen.tieneMovimientos} />}
+      {editable && <DemoControls cierreId={cierre.id} fecha={cierre.fecha} tieneMovimientos={resumen.tieneMovimientos} esDemo={cierre.esDemo} />}
+      {!editable && cierre.esDemo && <p className="mb-5 inline-flex rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-amber-800">Escenario demo · Datos de ejemplo</p>}
 
       <section className="mb-6">
         <p className="mb-1 text-sm font-semibold capitalize text-blue-700">
@@ -166,9 +167,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         ))}
       </section>
 
-      {editable && <NaturalLanguageInput configurada={iaConfigurada()} cierreId={cierre.id} />}
+      {editable && !cierre.esDemo && <NaturalLanguageInput configurada={iaConfigurada()} cierreId={cierre.id} />}
 
-      {editable ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {editable && !cierre.esDemo ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 sm:flex sm:items-end sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-950">Carga manual</h2>
@@ -181,9 +182,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <FormularioMovimiento cierreId={cierre.id} titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
           <FormularioMovimiento cierreId={cierre.id} titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
         </div>
-      </section> : <section className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Este cierre está finalizado. Sus movimientos se muestran en modo consulta; podés reabrirlo para editarlo.</section>}
+      </section> : finalizado ? <section className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Este cierre está finalizado. Sus movimientos se muestran en modo consulta; podés reabrirlo para editarlo.</section> : null}
 
-      {editable && <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {editable && !cierre.esDemo && <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
             <h2 className="font-bold text-slate-950">Efectivo contado</h2>
@@ -271,7 +272,7 @@ function SelectorFecha({ fecha, cierres }: { fecha: string; cierres: CierreLista
 
 function AvisoPendiente({ pendientes }: { pendientes: CierreListado[] }) {
   const reciente = pendientes[0];
-  return <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-5 sm:flex sm:items-center sm:justify-between sm:gap-4"><div><h2 className="font-bold text-amber-950">Tenés un cierre pendiente del {fechaCorta(reciente.fecha)}</h2>{pendientes.length > 1 && <p className="mt-1 text-sm text-amber-800">Hay {pendientes.length} cierres anteriores sin finalizar. Podés encontrarlos en el selector histórico.</p>}</div><a href={`/?fecha=${reciente.fecha}`} className="mt-3 inline-block rounded-lg bg-amber-900 px-4 py-2.5 text-sm font-bold text-white sm:mt-0">Continuar cierre</a></section>;
+  return <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-5 sm:flex sm:items-center sm:justify-between sm:gap-4"><div><h2 className="font-bold text-amber-950">Tenés un cierre sin finalizar del {fechaCorta(reciente.fecha)}</h2><p className="mt-1 text-sm text-amber-800">{reciente.estado === "conciliado" ? "Los movimientos están conciliados, pero el cierre todavía está abierto." : "El cierre todavía está abierto y tiene una diferencia para revisar."}</p>{pendientes.length > 1 && <p className="mt-1 text-xs text-amber-700">Hay {pendientes.length} cierres anteriores sin finalizar. Podés encontrarlos en el selector histórico.</p>}</div><a href={`/?fecha=${reciente.fecha}`} className="mt-3 inline-block rounded-lg bg-amber-900 px-4 py-2.5 text-sm font-bold text-white sm:mt-0">Continuar cierre</a></section>;
 }
 
 function DashboardVacio({ fecha, cierres, pendientes }: { fecha: string; cierres: CierreListado[]; pendientes: CierreListado[] }) {
