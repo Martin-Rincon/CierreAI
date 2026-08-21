@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import Image from "next/image";
 import { cierreFueAnalizado, fechaLocal, obtenerCausasCandidatas, obtenerCierresParaHistorico, obtenerCierresPendientes, obtenerMovimientosDelDia, obtenerResumenCierreActual, obtenerResumenCierrePorFecha } from "@/lib/data";
-import type { CausaCandidataVista, CierreListado, MedioPago, MovimientoDia } from "@/lib/types";
+import type { CausaCandidataVista, CierreListado, MedioPago } from "@/lib/types";
 import { cargarGasto, cargarPago, cargarVenta, confirmarCausa, descartarCausa, guardarEfectivoContado } from "./actions";
 import { AnalysisButton } from "./analysis-button";
 import { SubmitButton } from "./submit-button";
@@ -9,6 +10,7 @@ import { DemoControls } from "./demo-controls";
 import { LifecycleControls } from "./lifecycle-controls";
 import { explicacionDeterministica, iaConfigurada } from "@/lib/ia";
 import { CsvImport } from "./csv-import";
+import { MovementsList } from "./movements-list";
 
 export const dynamic = "force-dynamic";
 
@@ -82,9 +84,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-5 sm:px-6 lg:px-8">
       <header className="mb-7 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
-            <MarkIcon />
-          </div>
+          <BrandIcon />
           <div>
             <p className="text-xl font-bold tracking-tight text-slate-950">CierreAI</p>
             <p className="text-xs font-medium text-slate-500">Control de caja</p>
@@ -97,9 +97,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       {pendientes.length > 0 && <AvisoPendiente pendientes={pendientes} />}
       <SelectorFecha fecha={fechaSeleccionada} cierres={cierresHistoricos} />
-
-      {editable && <DemoControls cierreId={cierre.id} fecha={cierre.fecha} tieneMovimientos={resumen.tieneMovimientos} esDemo={cierre.esDemo} />}
-      {!editable && cierre.esDemo && <p className="mb-5 inline-flex rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-amber-800">Escenario demo · Datos de ejemplo</p>}
 
       <section className="mb-6">
         <p className="mb-1 text-sm font-semibold capitalize text-blue-700">
@@ -118,8 +115,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <p className="mt-1 text-sm">Finalizado el {new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date(`${cierre.finalizadoAt!.replace(" ", "T")}Z`))}. Se conserva toda la información en modo consulta.</p>
       </section>}
 
-      <LifecycleControls cierreId={cierre.id} diferencia={cierre.diferencia} resuelto={resuelto} finalizado={finalizado} />
-
       <section
         aria-label="Resumen general del cierre"
         className="mb-5 grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm sm:grid-cols-3"
@@ -130,6 +125,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           label="Diferencia"
           value={pesos(cierre.diferencia)}
           tone={concilia || resuelto ? "success" : "danger"}
+          prominent
         />
       </section>
 
@@ -137,9 +133,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         {resumen.desglose.map((item) => (
           <article
             key={item.medio}
-            className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
           >
-            <div className="mb-5 flex items-center justify-between">
+            <div className="mb-3 flex items-center justify-between">
               <div className="grid size-10 place-items-center rounded-xl bg-blue-50 text-blue-700">
                 {iconosMedio[item.medio]}
               </div>
@@ -168,11 +164,45 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         ))}
       </section>
 
-      {editable && !cierre.esDemo && <NaturalLanguageInput configurada={iaConfigurada()} cierreId={cierre.id} />}
+      <section className="mb-6" aria-label="Estado del cierre">
+        {!resumen.tieneMovimientos ? (
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-center">
+            <h2 className="font-bold text-blue-950">Todavía no cargaste movimientos</h2>
+            <p className="mt-1 text-sm text-blue-800">Elegí una forma de carga para empezar el cierre.</p>
+          </div>
+        ) : concilia ? (
+          <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-5 sm:flex sm:items-center sm:justify-between sm:gap-5">
+            <div className="flex items-center gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-600 text-white"><CheckIcon /></div><div><h2 className="text-lg font-bold text-emerald-950">Todo concilia</h2><p className="mt-0.5 text-sm text-emerald-800">No hay diferencias para revisar.</p></div></div>
+            <LifecycleControls cierreId={cierre.id} diferencia={cierre.diferencia} resuelto={resuelto} finalizado={finalizado} />
+          </div>
+        ) : resuelto ? (
+          <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-5 shadow-sm sm:flex sm:items-center sm:justify-between sm:gap-6">
+            <div className="flex min-w-0 gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-600 text-white"><CheckIcon /></div><div><p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Diferencia explicada</p><p className="mt-1 text-2xl font-bold tabular-nums text-emerald-950">{pesos(cierre.diferencia)}</p><p className="mt-1 text-sm leading-5 text-emerald-800">La diferencia contable original sigue registrada y las causas confirmadas la explican completamente.</p></div></div>
+            <LifecycleControls cierreId={cierre.id} diferencia={cierre.diferencia} resuelto={resuelto} finalizado={finalizado} />
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-red-300 bg-white p-5 shadow-md shadow-red-100/60 sm:flex sm:items-center sm:justify-between sm:gap-6">
+            <div className="flex gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-full bg-red-50 text-red-600"><AlertIcon /></div><div><p className="text-xs font-bold uppercase tracking-wider text-red-600">Diferencia</p><p className="mt-1 text-2xl font-bold tabular-nums text-red-700">{pesos(cierre.diferencia)}</p><p className="mt-1 text-sm leading-5 text-slate-600">Revisá qué movimientos pueden explicar este resultado.</p></div></div>
+            {editable && <AnalysisButton cierreId={cierre.id} />}
+          </div>
+        )}
 
-      {editable && <CsvImport cierreId={cierre.id} esDemo={cierre.esDemo} />}
+        {analizado && (causas.length > 0 ? <ResultadoAnalisis causas={causas} diferencia={cierre.diferencia} resuelto={resuelto} editable={editable} /> : <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">Análisis completado</h2><p className="mt-1 text-sm text-slate-600">No encontramos posibles causas con los criterios de búsqueda disponibles.</p></section>)}
+        {!concilia && !resuelto && <div className="mt-4"><LifecycleControls cierreId={cierre.id} diferencia={cierre.diferencia} resuelto={resuelto} finalizado={finalizado} /></div>}
+        {finalizado && !resumen.tieneMovimientos && <div className="mt-4"><LifecycleControls cierreId={cierre.id} diferencia={cierre.diferencia} resuelto={resuelto} finalizado={finalizado} /></div>}
+      </section>
 
-      {editable && !cierre.esDemo ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {editable && <DemoControls cierreId={cierre.id} fecha={cierre.fecha} tieneMovimientos={resumen.tieneMovimientos} esDemo={cierre.esDemo} />}
+      {!editable && cierre.esDemo && <p className="mb-5 inline-flex rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-amber-800">Escenario demo · Datos de ejemplo</p>}
+
+      {editable && <div id="carga" className="mb-6 rounded-3xl border border-slate-200 bg-slate-100/60 p-3 sm:p-4">
+        <div className="mb-4 px-2"><p className="text-xs font-bold uppercase tracking-wider text-blue-700">Alternativas de carga</p><h2 className="mt-1 text-xl font-bold text-slate-950">Carga rápida</h2><p className="mt-1 text-sm text-slate-600">Contá una operación con IA o importá varias desde un CSV.</p></div>
+        {!cierre.esDemo && <NaturalLanguageInput configurada={iaConfigurada()} cierreId={cierre.id} />}
+
+        <CsvImport cierreId={cierre.id} esDemo={cierre.esDemo} />
+      </div>}
+
+      {editable && !cierre.esDemo ? <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 sm:flex sm:items-end sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-950">Carga manual</h2>
@@ -185,75 +215,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <FormularioMovimiento cierreId={cierre.id} titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
           <FormularioMovimiento cierreId={cierre.id} titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
         </div>
-      </section> : finalizado ? <section className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Este cierre está finalizado. Sus movimientos se muestran en modo consulta; podés reabrirlo para editarlo.</section> : null}
-
-      {editable && !cierre.esDemo && <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
-          <div>
-            <h2 className="font-bold text-slate-950">Efectivo contado</h2>
-            <p className="mt-1 text-sm text-slate-600">Podés cargarlo ahora y editarlo cada vez que vuelvas a contar la caja.</p>
+        <div className="mt-5 border-t border-slate-200 pt-5">
+          <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div><h3 className="font-bold text-slate-950">Efectivo contado</h3><p className="mt-1 text-sm text-slate-600">Ingresá el total contado en caja. Podés actualizarlo si volvés a contar.</p></div>
+            <form action={guardarEfectivoContado} className="flex flex-col gap-2 sm:flex-row"><input type="hidden" name="cierre_id" value={cierre.id} /><CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" /><SubmitButton idle="Guardar efectivo" pending="Guardando…" className="w-full self-end rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto" /></form>
           </div>
-          <form action={guardarEfectivoContado} className="flex flex-col gap-2 sm:flex-row">
-            <input type="hidden" name="cierre_id" value={cierre.id} />
-            <CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" />
-            <SubmitButton idle="Guardar" pending="Guardando…" className="self-end rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700" />
-          </form>
         </div>
-      </section>}
+      </section> : null}
 
-      <section className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="movimientos-title">
-        <div className="border-b border-slate-100 p-5">
-          <h2 id="movimientos-title" className="text-xl font-bold text-slate-950">Movimientos del día</h2>
-          <p className="mt-1 text-sm text-slate-600">{movimientos.length} movimientos, ordenados del más reciente al más antiguo.</p>
-        </div>
-        {movimientos.length === 0 ? <p className="p-5 text-sm text-slate-500">Todavía no hay movimientos cargados.</p> : (
-          <ul className="divide-y divide-slate-100">
-            {movimientos.map((movimiento) => <Movimiento key={`${movimiento.tipo}-${movimiento.id}`} movimiento={movimiento} />)}
-          </ul>
-        )}
-      </section>
-
-      {!resumen.tieneMovimientos ? (
-        <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-center">
-          <h2 className="font-bold text-blue-950">Todavía no cargaste movimientos</h2>
-          <p className="mt-1 text-sm text-blue-800">Empezá registrando las operaciones del día.</p>
-          <button className="mt-4 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white">
-            Cargar movimientos
-          </button>
-        </section>
-      ) : concilia ? (
-        <section className="flex items-center gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-          <div className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-600 text-white">
-            <CheckIcon />
-          </div>
-          <div>
-            <h2 className="font-bold text-emerald-950">Todo concilia</h2>
-            <p className="mt-0.5 text-sm text-emerald-800">No hay diferencias para revisar.</p>
-          </div>
-        </section>
-      ) : resuelto ? (
-        <section className="flex items-center gap-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-          <div className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-600 text-white"><CheckIcon /></div>
-          <div><h2 className="font-bold text-emerald-950">Diferencia explicada</h2><p className="mt-0.5 text-sm text-emerald-800">Las causas confirmadas explican exactamente la diferencia de {pesos(cierre.diferencia)}.</p></div>
-        </section>
-      ) : (
-        <section className="rounded-2xl border border-red-200 bg-white p-5 shadow-sm sm:flex sm:items-center sm:justify-between sm:gap-6">
-          <div className="flex gap-4">
-            <div className="grid size-11 shrink-0 place-items-center rounded-full bg-red-50 text-red-600">
-              <AlertIcon />
-            </div>
-            <div>
-              <h2 className="font-bold text-slate-950">Hay una diferencia para revisar</h2>
-              <p className="mt-1 text-sm leading-5 text-slate-600">
-                Faltan <strong className="text-red-700">{pesos(Math.abs(cierre.diferencia))}</strong> entre lo esperado y lo registrado.
-              </p>
-            </div>
-          </div>
-          {editable && <AnalysisButton cierreId={cierre.id} />}
-        </section>
-      )}
-
-      {analizado && (causas.length > 0 ? <ResultadoAnalisis causas={causas} diferencia={cierre.diferencia} resuelto={resuelto} editable={editable} /> : <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">Análisis completado</h2><p className="mt-1 text-sm text-slate-600">No se encontraron causas candidatas con los criterios determinísticos disponibles.</p></section>)}
+      <MovementsList cierreId={cierre.id} movimientos={movimientos} editable={editable} />
 
       <section className="mt-5 grid grid-cols-3 gap-2" aria-label="Actividad del día">
         <Count label="Ventas" value={resumen.cantidadVentas} />
@@ -280,7 +250,7 @@ function AvisoPendiente({ pendientes }: { pendientes: CierreListado[] }) {
 
 function DashboardVacio({ fecha, cierres, pendientes }: { fecha: string; cierres: CierreListado[]; pendientes: CierreListado[] }) {
   return <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-5 sm:px-6 lg:px-8">
-    <header className="mb-7 flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><MarkIcon /></div><div><p className="text-xl font-bold text-slate-950">CierreAI</p><p className="text-xs text-slate-500">Control de caja</p></div></header>
+    <header className="mb-7 flex items-center gap-3"><BrandIcon /><div><p className="text-xl font-bold text-slate-950">CierreAI</p><p className="text-xs text-slate-500">Control de caja</p></div></header>
     {pendientes.length > 0 && <AvisoPendiente pendientes={pendientes} />}
     <SelectorFecha fecha={fecha} cierres={cierres} />
     <section className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm"><h1 className="text-xl font-bold text-slate-950">No existe un cierre para esta fecha</h1><p className="mt-2 text-sm text-slate-600">No se creó ningún registro al navegar a {fecha}. Elegí otra fecha para consultar un cierre existente.</p></section>
@@ -291,7 +261,7 @@ function ResultadoAnalisis({ causas, diferencia, resuelto, editable }: { causas:
   const principal = causas.find((causa) => causa.esPrincipal);
   const ordenadas = principal ? [principal, ...causas.filter((causa) => causa.id !== principal.id)] : causas;
   return <section className="mt-5 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm" aria-labelledby="resultado-title">
-    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Resultado del análisis</p>
+    <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Revisión de la diferencia</p>
     <h2 id="resultado-title" className="mt-1 text-xl font-bold text-slate-950">{causas.length === 1 ? "Posible causa encontrada" : "Posibles causas encontradas"}</h2>
     <p className={`mt-2 text-sm ${resuelto ? "text-emerald-800" : "text-amber-800"}`}>{resuelto ? "Las causas confirmadas explican completamente la diferencia del cierre." : principal ? "Una causa posible explica por sí sola toda la diferencia. Revisá la evidencia antes de confirmarla." : "Ninguna causa explica por sí sola toda la diferencia. Revisá todas las posibilidades antes de confirmar."}</p>
     <div className="mt-4 space-y-3">{ordenadas.map((causa) => <CausaCard key={causa.id} causa={causa} diferencia={diferencia} editable={editable} />)}</div>
@@ -303,16 +273,16 @@ function CausaCard({ causa, diferencia, editable }: { causa: CausaCandidataVista
   const explicacion = causa.explicacionIa ?? explicacionDeterministica(causa);
   return <article className={`min-w-0 rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
     {causa.esPrincipal && <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800">Explica exactamente la diferencia</p>}
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{causa.estado}</span></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{causa.estado === "pendiente" ? "Por revisar" : causa.estado === "confirmada" ? "Confirmada" : "Descartada"}</span></div>
     <p className="mt-3 text-sm text-slate-700">{explicacion} <strong>Efecto sobre el cierre: {pesosConSigno(causa.efecto)}.</strong></p>
-    <details className="mt-3 rounded-lg border border-slate-200 bg-white p-3 text-sm"><summary className="cursor-pointer font-bold text-blue-700">Ver evidencia</summary><dl className="mt-3 grid gap-2 text-slate-600 sm:grid-cols-2">
-      <div><dt className="font-bold text-slate-800">Entidad analizada</dt><dd>{entidad}</dd></div><div><dt className="font-bold text-slate-800">Monto</dt><dd>{pesos(causa.monto)}</dd></div>
+    <details className="mt-3 rounded-lg border border-slate-200 bg-white text-sm"><summary className="cursor-pointer px-3 py-3 font-bold text-blue-700">Ver evidencia</summary><dl className="grid gap-2 border-t border-slate-100 px-3 pb-3 pt-3 text-slate-600 sm:grid-cols-2">
+      <div><dt className="font-bold text-slate-800">Movimiento revisado</dt><dd>{entidad}</dd></div><div><dt className="font-bold text-slate-800">Monto</dt><dd>{pesos(causa.monto)}</dd></div>
       <div><dt className="font-bold text-slate-800">Medio y hora</dt><dd>{causa.medioPago ? `${etiquetasMedio[causa.medioPago]} · ${causa.hora}` : "Cálculo global de efectivo"}</dd></div><div><dt className="font-bold text-slate-800">Diferencia general</dt><dd>{pesos(diferencia)}</dd></div>
       <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Criterio de búsqueda</dt><dd>{causa.tipo === "diferencia_efectivo" ? "Efectivo inicial + ventas en efectivo − gastos en efectivo, comparado con efectivo contado." : "Mismo cierre, medio y monto exacto; luego se priorizan la hora más cercana, la más temprana y el registro más antiguo."}</dd></div>
       <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Resultado de la búsqueda</dt><dd>{causa.tipo === "diferencia_efectivo" ? "El efectivo esperado y el contado no coinciden." : causa.tipo === "venta_sin_pago" ? "No se encontró un pago compatible para esta venta." : "No se encontró una venta compatible para este pago recibido."}</dd></div>
       {causa.tipo === "diferencia_efectivo" && <><div><dt className="font-bold text-slate-800">Efectivo esperado</dt><dd>{causa.efectivoEsperado == null ? "Sin dato" : pesos(causa.efectivoEsperado)}</dd></div><div><dt className="font-bold text-slate-800">Efectivo contado</dt><dd>{causa.efectivoContado == null ? "Sin dato" : pesos(causa.efectivoContado)}</dd></div><div className="sm:col-span-2"><dt className="font-bold text-slate-800">Diferencia de efectivo</dt><dd>{pesosConSigno(causa.efecto)}</dd></div></>}
     </dl></details>
-    {editable && causa.estado === "pendiente" && <div className="mt-3 flex gap-2"><form action={confirmarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Confirmar causa" pending="Confirmando…" className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white" /></form><form action={descartarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Descartar" pending="Descartando…" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700" /></form></div>}
+    {editable && causa.estado === "pendiente" && <div className="mt-3 flex flex-col gap-2 sm:flex-row"><form action={confirmarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Confirmar causa" pending="Confirmando…" className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 sm:w-auto" /></form><form action={descartarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Descartar" pending="Descartando…" className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700 sm:w-auto" /></form></div>}
   </article>;
 }
 
@@ -341,16 +311,10 @@ function Campo({ label, name, required = false }: { label: string; name: string;
   return <label className="block text-xs font-bold text-slate-600">{label}<input name={name} required={required} maxLength={100} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>;
 }
 
-function Movimiento({ movimiento }: { movimiento: MovimientoDia }) {
-  const tipo = movimiento.tipo === "venta" ? "Venta" : movimiento.tipo === "gasto" ? "Gasto" : "Pago recibido";
-  const signo = movimiento.tipo === "gasto" ? "−" : "+";
-  return <li className="flex items-center gap-3 px-5 py-3.5"><time className="w-12 text-sm tabular-nums text-slate-500">{movimiento.hora}</time><div className="min-w-0 flex-1"><p className="font-semibold text-slate-900">{tipo}</p><p className="truncate text-xs text-slate-500">{movimiento.detalle} · {etiquetasMedio[movimiento.medioPago]}</p></div><p className={`font-bold tabular-nums ${movimiento.tipo === "gasto" ? "text-red-600" : "text-slate-900"}`}>{signo}{pesos(movimiento.monto)}</p></li>;
-}
-
-function Total({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" | "danger" }) {
+function Total({ label, value, tone = "default", prominent = false }: { label: string; value: string; tone?: "default" | "success" | "danger"; prominent?: boolean }) {
   const toneClass = tone === "danger" ? "text-red-600" : tone === "success" ? "text-emerald-600" : "text-slate-950";
   return (
-    <div className="border-b border-slate-100 p-5 last:border-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+    <div className={`border-b border-slate-100 p-5 last:border-0 sm:border-b-0 sm:border-r sm:last:border-r-0 ${prominent ? tone === "danger" ? "bg-red-50/70" : "bg-emerald-50/70" : ""}`}>
       <dt className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">{label}</dt>
       <dd className={`text-2xl font-bold tabular-nums tracking-tight ${toneClass}`}>{value}</dd>
     </div>
@@ -366,7 +330,7 @@ function Count({ label, value }: { label: string; value: number }) {
   );
 }
 
-function MarkIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" className="size-6 fill-none stroke-current" strokeWidth="2.2"><path d="M5 12.5 9.2 17 19 7" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
+function BrandIcon() { return <Image src="/icon.svg" alt="" width={40} height={40} priority className="size-10 rounded-xl shadow-lg shadow-blue-600/20" />; }
 function CashIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-none stroke-current" strokeWidth="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9h.01M18 15h.01" strokeLinecap="round"/></svg>; }
 function TransferIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-none stroke-current" strokeWidth="1.8"><path d="M5 8h14M15 4l4 4-4 4M19 16H5M9 20l-4-4 4-4" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function WalletIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-none stroke-current" strokeWidth="1.8"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18a2 2 0 0 1 2 2v11H6.5A2.5 2.5 0 0 1 4 15.5v-8Z"/><path d="M15 10h6v5h-6a2.5 2.5 0 0 1 0-5Z"/><circle cx="16" cy="12.5" r=".5" fill="currentColor"/></svg>; }

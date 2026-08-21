@@ -27,13 +27,13 @@ export function NaturalLanguageInput({ configurada, cierreId }: { configurada: b
     });
   }
 
-  return <section className="mb-5 rounded-2xl border border-blue-200 bg-white p-5 shadow-sm" aria-labelledby="carga-ia-title">
+  return <section className="mb-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="carga-ia-title">
     <div className="grid gap-5 lg:grid-cols-[1fr_0.9fr]">
       <div>
-        <h2 id="carga-ia-title" className="text-xl font-bold text-slate-950">Contale a CierreAI qué pasó</h2>
+        <h3 id="carga-ia-title" className="text-lg font-bold text-slate-950">Contale a CierreAI qué pasó</h3>
         <p className="mt-1 text-sm text-slate-600">Por ejemplo: “Vendí $12.500 por Mercado Pago a las 18:30”.</p>
-        <textarea value={texto} onChange={(event) => setTexto(event.target.value)} maxLength={500} rows={4} placeholder="Escribí una venta, un gasto o un pago recibido…" className="mt-4 block w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm" />
-        <button type="button" onClick={interpretar} disabled={pending || !texto.trim() || !configurada} className="mt-3 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{pending ? "Interpretando…" : "Interpretar con IA"}</button>
+        <label htmlFor="movimiento-ia" className="sr-only">Venta, gasto o pago recibido</label><textarea id="movimiento-ia" value={texto} onChange={(event) => setTexto(event.target.value)} maxLength={500} rows={4} placeholder="Escribí una venta, un gasto o un pago recibido…" className="mt-4 block w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm" />
+        <button type="button" onClick={interpretar} disabled={pending || !texto.trim() || !configurada} className="mt-3 w-full rounded-xl border border-blue-300 bg-white px-5 py-3 text-sm font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto">{pending ? "Interpretando…" : "Interpretar con IA"}</button>
         {!configurada && <p role="status" className="mt-3 text-sm text-amber-700">Las funciones de IA no están configuradas. La carga manual y la conciliación siguen disponibles.</p>}
         {error && <p role="alert" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{error}</p>}
       </div>

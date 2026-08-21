@@ -34,16 +34,16 @@ export function LifecycleControls({ cierreId, diferencia, resuelto, finalizado }
     });
   }
 
-  return <div className="mb-5">
-    <button type="button" onClick={() => setAbierto(true)} className={finalizado ? "rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700" : "rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-700"}>{finalizado ? "Reabrir cierre" : "Finalizar cierre"}</button>
+  return <div className="mt-4 sm:mt-0">
+    <button type="button" onClick={() => setAbierto(true)} className={finalizado ? "w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50 sm:w-auto" : "w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto"}>{finalizado ? "Reabrir cierre" : "Finalizar cierre"}</button>
     {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
-    {abierto && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="ciclo-title">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+    {abierto && <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-slate-950/45 p-4" role="dialog" aria-modal="true" aria-labelledby="ciclo-title">
+      <div className="my-auto w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
         <h2 id="ciclo-title" className="text-xl font-bold text-slate-950">{finalizado ? "Reabrir cierre" : "Finalizar cierre"}</h2>
         <p className="mt-3 text-sm leading-6 text-slate-700">{mensaje}</p>
-        <div className="mt-6 flex justify-end gap-2">
-          <button type="button" disabled={pending} onClick={() => setAbierto(false)} className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-bold text-slate-700">Cancelar</button>
-          <button type="button" disabled={pending} onClick={confirmar} className="rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-60">{pending ? "Guardando…" : finalizado ? "Reabrir cierre" : "Finalizar cierre"}</button>
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" disabled={pending} onClick={() => setAbierto(false)} className="rounded-lg border border-slate-300 px-4 py-3 text-sm font-bold text-slate-700 disabled:opacity-60">Cancelar</button>
+          <button type="button" disabled={pending} onClick={confirmar} className="rounded-lg bg-slate-900 px-4 py-3 text-sm font-bold text-white disabled:cursor-wait disabled:opacity-60">{pending ? "Guardando…" : finalizado ? "Reabrir cierre" : "Finalizar cierre"}</button>
         </div>
       </div>
     </div>}

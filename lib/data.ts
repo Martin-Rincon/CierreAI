@@ -8,6 +8,7 @@ import type {
   MedioPago,
   MovimientoDia,
   ResumenCierre,
+  TipoMovimiento,
 } from "./types.ts";
 
 interface EntidadConciliableRow { id: number; cierre_id: number; monto: number; medio_pago: MedioPago; hora: string }
@@ -295,6 +296,33 @@ export async function obtenerCierreParaCargaReal(cierreId: number, executor?: Db
   const cierre = await obtenerCierreEditable(cierreId, executor);
   if (cierre.es_demo === 1) throw new Error("Primero elegí Empezar con mis datos para salir del escenario demo.");
   return cierre;
+}
+
+export async function eliminarMovimiento(cierreId: number, tipo: TipoMovimiento, movimientoId: number): Promise<void> {
+  if (!Number.isSafeInteger(movimientoId) || movimientoId <= 0) throw new Error("El movimiento seleccionado no es válido.");
+  const tablas: Record<TipoMovimiento, "ventas" | "gastos" | "movimientos_pago"> = {
+    venta: "ventas",
+    gasto: "gastos",
+    pago: "movimientos_pago",
+  };
+  if (!(tipo in tablas)) throw new Error("El tipo de movimiento no es válido.");
+  await transaction(async (tx) => {
+    const cierre = await obtenerCierreEditable(cierreId, tx);
+    const eliminado = await run(`DELETE FROM ${tablas[tipo]} WHERE id = ? AND cierre_id = ?`, [movimientoId, cierre.id], tx);
+    if (eliminado.rowsAffected === 0) return;
+    await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierre.id], tx);
+    await run("UPDATE ventas SET conciliada = 0 WHERE cierre_id = ?", [cierre.id], tx);
+    await run("UPDATE movimientos_pago SET conciliado = 0 WHERE cierre_id = ?", [cierre.id], tx);
+    await run(`UPDATE cierres SET
+      total_esperado = efectivo_inicial
+        + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ?), 0)
+        - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ?), 0),
+      total_registrado = COALESCE(efectivo_contado, 0)
+        + COALESCE((SELECT SUM(monto) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo'), 0)
+      WHERE id = ?`, [cierre.id, cierre.id, cierre.id, cierre.id], tx);
+    await run("UPDATE cierres SET diferencia = total_registrado - total_esperado WHERE id = ?", [cierre.id], tx);
+    await run("UPDATE cierres SET analizado = 0, estado = CASE WHEN diferencia = 0 THEN 'conciliado' ELSE 'con_diferencia' END WHERE id = ?", [cierre.id], tx);
+  });
 }
 
 export async function finalizarCierre(cierreId: number): Promise<void> {

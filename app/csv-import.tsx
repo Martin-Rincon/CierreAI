@@ -75,11 +75,11 @@ export function CsvImport({ cierreId, esDemo }: { cierreId: number; esDemo: bool
     });
   }
 
-  return <section className="mb-5 rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm" aria-labelledby="csv-title">
+  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" aria-labelledby="csv-title">
     <div className="sm:flex sm:items-center sm:justify-between sm:gap-5">
-      <div><h2 id="csv-title" className="text-xl font-bold text-slate-950">Carga rápida</h2><p className="mt-1 text-sm text-slate-600">Usá el formato de ejemplo para cargar varias ventas, gastos y pagos de una vez.</p></div>
+      <div><h3 id="csv-title" className="text-lg font-bold text-slate-950">Importar CSV</h3><p className="mt-1 text-sm text-slate-600">Cargá varias ventas, gastos y pagos usando el formato de ejemplo.</p></div>
       <div className="mt-4 flex flex-col gap-2 sm:mt-0 sm:flex-row">
-        <button type="button" onClick={() => inputRef.current?.click()} disabled={pending || esDemo} className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{pending ? "Procesando…" : "Importar CSV"}</button>
+        <button type="button" onClick={() => inputRef.current?.click()} disabled={pending || esDemo} className="rounded-xl border border-blue-300 bg-white px-4 py-3 text-sm font-bold text-blue-700 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50">{pending ? "Procesando…" : "Importar CSV"}</button>
         <button type="button" onClick={descargarEjemplo} className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700">Descargar CSV de ejemplo</button>
         <input ref={inputRef} type="file" accept=".csv,text/csv" onChange={elegirArchivo} className="sr-only" aria-label="Seleccionar archivo CSV" />
       </div>

@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { run, transaction, type DbExecutor } from "@/lib/db";
-import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreParaCargaReal, obtenerDiferenciaCierre, reabrirCierre, restablecerDatosEscenarioDemo, vaciarDatosCierre } from "@/lib/data";
+import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, eliminarMovimiento, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreParaCargaReal, obtenerDiferenciaCierre, reabrirCierre, restablecerDatosEscenarioDemo, vaciarDatosCierre } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
-import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
+import { MEDIOS_PAGO, type MedioPago, type TipoMovimiento } from "@/lib/types";
 import { CsvValidationError } from "@/lib/csv";
 import { importarCsv, prepararImportacionCsv } from "@/lib/csv-import";
 
@@ -178,6 +178,15 @@ export async function vaciarCierreSeleccionado(id: number): Promise<string> {
   const fecha = await vaciarDatosCierre(id);
   revalidatePath("/");
   return fecha;
+}
+
+export async function eliminarMovimientoSeleccionado(formData: FormData): Promise<void> {
+  const tipo = texto(formData, "tipo") as TipoMovimiento;
+  if (!(["venta", "gasto", "pago"] as const).includes(tipo)) throw new Error("El tipo de movimiento no es válido.");
+  const movimientoId = Number(formData.get("movimiento_id"));
+  if (!Number.isSafeInteger(movimientoId) || movimientoId <= 0) throw new Error("El movimiento seleccionado no es válido.");
+  await eliminarMovimiento(cierreId(formData), tipo, movimientoId);
+  revalidatePath("/");
 }
 
 export type ResultadoPreviewCsv =

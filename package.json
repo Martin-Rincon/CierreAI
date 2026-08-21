@@ -16,7 +16,8 @@
     "test:ia": "node --experimental-strip-types scripts/test-ia.ts",
     "test:lifecycle": "node --experimental-strip-types scripts/test-lifecycle.ts",
     "test:demo-mode": "node --experimental-strip-types scripts/test-demo-mode.ts",
-    "test:csv": "node --experimental-strip-types scripts/test-csv.ts"
+    "test:csv": "node --experimental-strip-types scripts/test-csv.ts",
+    "test:delete-movement": "node --experimental-strip-types scripts/test-delete-movement.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.45",

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "CierreAI",
-  description: "Encontrá la diferencia de tu cierre de caja.",
+  title: "CierreAI | Control de caja",
+  description: "Asistente para conciliación y cierre de caja",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
