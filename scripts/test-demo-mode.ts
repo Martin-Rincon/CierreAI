@@ -10,6 +10,7 @@ delete process.env.TURSO_AUTH_TOKEN;
 
 const { closeDatabase, get, run } = await import("../lib/db.ts");
 const { cargarDatosEscenarioDemo, obtenerCierreEditable, restablecerDatosEscenarioDemo, vaciarDatosCierre } = await import("../lib/data.ts");
+const { coordinarVaciado } = await import("../lib/vaciar-flow.ts");
 
 async function crearCierre(fecha: string, extra = ""): Promise<number> {
   return Number((await run(`INSERT INTO cierres (fecha, efectivo_inicial${extra ? `, ${extra}` : ""}) VALUES (?, 0${extra ? ", 1" : ""})`, [fecha])).lastInsertRowid);
@@ -47,6 +48,8 @@ try {
   assert.deepEqual(demoVacio, { efectivo_contado: null, analizado: 0, es_demo: 0, total_esperado: 0, total_registrado: 0, diferencia: 0, finalizado_at: null }, "5. cargar demo y empezar con mis datos deja el cierre vacío, editable y fuera de demo");
   assert.equal((await obtenerCierreEditable(demo)).id, demo);
   assert.equal((await cantidades(otro))?.ventas, 1, "6. otros cierres permanecen intactos");
+  await vaciarDatosCierre(demo);
+  assert.deepEqual(await cantidades(demo), { ventas: 0, gastos: 0, pagos: 0, causas: 0 }, "6b. repetir el vaciado es seguro e idempotente");
 
   await agregarDatosCompletos(demo);
   await vaciarDatosCierre(demo);
@@ -76,7 +79,22 @@ try {
   assert.deepEqual(await cantidades(rollback), { ventas: 1, gastos: 1, pagos: 1, causas: 1 }, "11. un fallo revierte todas las eliminaciones");
   await run("DROP TRIGGER impedir_vaciado");
 
-  console.log("OK: 11 casos de separación demo, vaciado acotado y rollback transaccional superados.");
+  let resolverRespuesta!: (fecha: string) => void;
+  const respuestaLenta = new Promise<string>((resolve) => { resolverRespuesta = resolve; });
+  const control = { enCurso: false };
+  const eventos: string[] = [];
+  let ejecuciones = 0;
+  const primera = coordinarVaciado(control, async () => { ejecuciones += 1; return respuestaLenta; }, (fecha) => { eventos.push(`cerrar:${fecha}`); eventos.push(`navegar:${fecha}`); }, () => eventos.push("error"));
+  const segunda = coordinarVaciado(control, async () => { ejecuciones += 1; return "duplicada"; }, () => eventos.push("feedback-duplicado"), () => eventos.push("error-duplicado"));
+  assert.equal(control.enCurso, true, "12. una respuesta lenta mantiene el estado pending");
+  assert.equal(ejecuciones, 1, "13. un doble submit ejecuta una sola operación");
+  assert.deepEqual(eventos, [], "14. no cierra ni navega antes de recibir respuesta");
+  resolverRespuesta("2001-01-06");
+  await Promise.all([primera, segunda]);
+  assert.equal(control.enCurso, false, "15. libera el lock después de completar");
+  assert.deepEqual(eventos, ["cerrar:2001-01-06", "navegar:2001-01-06"], "16. cierra y navega una sola vez al recibir éxito");
+
+  console.log("OK: 16 casos de demo, vaciado idempotente, respuesta lenta y doble submit superados.");
   await closeDatabase();
 } finally {
   try { fs.rmSync(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (error) {

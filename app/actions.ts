@@ -169,15 +169,11 @@ export async function restablecerEscenarioDemo(id: number): Promise<void> {
 }
 
 export async function empezarConMisDatos(id: number): Promise<string> {
-  const fecha = await vaciarDatosCierre(id, true);
-  revalidatePath("/");
-  return fecha;
+  return vaciarDatosCierre(id, true);
 }
 
 export async function vaciarCierreSeleccionado(id: number): Promise<string> {
-  const fecha = await vaciarDatosCierre(id);
-  revalidatePath("/");
-  return fecha;
+  return vaciarDatosCierre(id);
 }
 
 export async function eliminarMovimientoSeleccionado(formData: FormData): Promise<void> {

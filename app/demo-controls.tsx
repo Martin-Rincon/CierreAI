@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { coordinarVaciado } from "@/lib/vaciar-flow";
 import { cargarEscenarioDemo, empezarConMisDatos, restablecerEscenarioDemo, vaciarCierreSeleccionado } from "./actions";
 
 type Confirmacion = "empezar" | "vaciar" | null;
@@ -12,7 +13,7 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
   const [error, setError] = useState<string | null>(null);
   const [confirmacion, setConfirmacion] = useState<Confirmacion>(null);
   const [empezandoConMisDatos, setEmpezandoConMisDatos] = useState(false);
-  const vaciadoEnCurso = useRef(false);
+  const vaciadoEnCurso = useRef({ enCurso: false });
   const operacionPendiente = pending || empezandoConMisDatos;
 
   function limpiarFeedbackAnterior() {
@@ -42,9 +43,8 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
   }
 
   async function confirmarEmpezarConMisDatos() {
-    if (vaciadoEnCurso.current || empezandoConMisDatos) return;
-    vaciadoEnCurso.current = true;
-    limpiarFeedbackAnterior();
+    if (vaciadoEnCurso.current.enCurso || empezandoConMisDatos) return;
+    vaciadoEnCurso.current.enCurso = true;
     setEmpezandoConMisDatos(true);
     setError(null);
     try {
@@ -52,13 +52,14 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
       const mensaje = "Cierre vacío. Ya podés cargar tus propios movimientos.";
       setConfirmacion(null);
       setEmpezandoConMisDatos(false);
-      vaciadoEnCurso.current = false;
+      vaciadoEnCurso.current.enCurso = false;
       router.replace(`/?fecha=${fechaResultado || fecha}&mensaje=${encodeURIComponent(mensaje)}&actualizado=${Date.now()}#carga`);
     } catch (cause) {
-      vaciadoEnCurso.current = false;
+      vaciadoEnCurso.current.enCurso = false;
       setEmpezandoConMisDatos(false);
       setError(cause instanceof Error ? cause.message : "No pudimos vaciar el cierre. Probá de nuevo.");
       setConfirmacion(null);
+      limpiarFeedbackAnterior();
     }
   }
 
@@ -68,22 +69,19 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
       void confirmarEmpezarConMisDatos();
       return;
     }
-    if (vaciadoEnCurso.current || pending) return;
-    vaciadoEnCurso.current = true;
-    limpiarFeedbackAnterior();
+    if (vaciadoEnCurso.current.enCurso || pending) return;
     setError(null);
     startTransition(async () => {
-      try {
-        const fechaResultado = await vaciarCierreSeleccionado(cierreId);
+      await coordinarVaciado(vaciadoEnCurso.current, () => vaciarCierreSeleccionado(cierreId), (fechaResultado) => {
         const mensaje = "Se vaciaron los datos del cierre.";
         const actualizado = Date.now();
         setConfirmacion(null);
         router.replace(`/?fecha=${fechaResultado || fecha}&mensaje=${encodeURIComponent(mensaje)}&actualizado=${actualizado}#carga`);
-      } catch (cause) {
-        vaciadoEnCurso.current = false;
+      }, (cause) => {
         setError(cause instanceof Error ? cause.message : "No pudimos vaciar el cierre. Probá de nuevo.");
         setConfirmacion(null);
-      }
+        limpiarFeedbackAnterior();
+      });
     });
   }
 
