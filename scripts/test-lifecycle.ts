@@ -41,7 +41,33 @@ try {
   assert.ok(pendientes.some((item) => item.fecha === "2000-01-03"), "9. detecta un cierre pendiente de ayer");
   assert.ok(!pendientes.some((item) => item.fecha === "2000-01-01"), "10. un cierre finalizado de ayer no aparece pendiente");
 
-  console.log("OK: 10 casos del ciclo de vida, reapertura y cierres pendientes superados.");
+  const vacioUno = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('2000-01-10', 0)")).lastInsertRowid);
+  const vacioDos = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial, efectivo_contado, total_esperado, total_registrado, diferencia) VALUES ('2000-01-11', 0, 0, 0, 0, 0)")).lastInsertRowid);
+  const conVenta = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('2000-01-12', 0)")).lastInsertRowid);
+  await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, 100, 'efectivo', '10:00', 'formulario')", [conVenta]);
+  const conGasto = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('2000-01-13', 0)")).lastInsertRowid);
+  await run("INSERT INTO gastos (cierre_id, monto, categoria, medio_pago, hora, metodo_carga) VALUES (?, 100, 'Prueba', 'efectivo', '10:00', 'formulario')", [conGasto]);
+  const conPago = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('2000-01-14', 0)")).lastInsertRowid);
+  await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, 100, 'transferencia', '10:00', 'formulario')", [conPago]);
+  await run("INSERT INTO cierres (fecha, efectivo_inicial, efectivo_contado) VALUES ('2000-01-15', 0, 100)");
+  await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('2000-01-16', 100)");
+  const finalizadoConActividad = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial, finalizado_at) VALUES ('2000-01-17', 100, CURRENT_TIMESTAMP)")).lastInsertRowid);
+
+  const pendientesConActividad = await obtenerCierresPendientes("2000-02-01");
+  const fechasPendientes = pendientesConActividad.map((item) => item.fecha);
+  assert.ok(!fechasPendientes.includes("2000-01-10"), "11. un cierre vacío no genera aviso");
+  assert.ok(!fechasPendientes.includes("2000-01-11"), "12. varios cierres vacíos y valores cero no incrementan el contador");
+  assert.ok(fechasPendientes.includes("2000-01-12"), "13. una venta genera aviso");
+  assert.ok(fechasPendientes.includes("2000-01-13"), "14. un gasto genera aviso");
+  assert.ok(fechasPendientes.includes("2000-01-14"), "15. un pago recibido genera aviso");
+  assert.ok(fechasPendientes.includes("2000-01-15"), "16. efectivo contado relevante genera aviso");
+  assert.ok(fechasPendientes.includes("2000-01-16"), "17. efectivo inicial relevante genera aviso");
+  assert.ok(!fechasPendientes.includes("2000-01-17"), "18. un cierre finalizado nunca genera aviso");
+  assert.equal((await get<{ id: number }>("SELECT id FROM cierres WHERE id = ?", [vacioUno]))?.id, vacioUno, "19. el cierre vacío sigue existiendo");
+  assert.equal((await get<{ id: number }>("SELECT id FROM cierres WHERE id = ?", [vacioDos]))?.id, vacioDos);
+  assert.equal((await get<{ finalizado_at: string | null }>("SELECT finalizado_at FROM cierres WHERE id = ?", [finalizadoConActividad]))?.finalizado_at == null, false, "20. no altera lifecycle ni otros cierres");
+
+  console.log("OK: 20 casos de lifecycle y avisos limitados a cierres con actividad real superados.");
   await closeDatabase();
 } finally {
   try { fs.rmSync(temporaryDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (error) {

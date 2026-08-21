@@ -88,7 +88,13 @@ export async function obtenerCierresParaHistorico(): Promise<CierreListado[]> {
 
 export async function obtenerCierresPendientes(fechaHoy = fechaLocal()): Promise<CierreListado[]> {
   return (await all<{ fecha: string; estado: EstadoCierre; finalizado_at: string | null }>(
-    "SELECT fecha, estado, finalizado_at FROM cierres WHERE fecha < ? AND finalizado_at IS NULL ORDER BY fecha DESC", [fechaHoy],
+    `SELECT c.fecha, c.estado, c.finalizado_at FROM cierres c
+     WHERE c.fecha < ? AND c.finalizado_at IS NULL
+       AND (c.efectivo_inicial > 0 OR COALESCE(c.efectivo_contado, 0) > 0
+         OR EXISTS (SELECT 1 FROM ventas v WHERE v.cierre_id = c.id)
+         OR EXISTS (SELECT 1 FROM gastos g WHERE g.cierre_id = c.id)
+         OR EXISTS (SELECT 1 FROM movimientos_pago mp WHERE mp.cierre_id = c.id))
+     ORDER BY c.fecha DESC`, [fechaHoy],
   )).map((row) => ({ fecha: row.fecha, estado: row.estado, finalizadoAt: row.finalizado_at }));
 }
 
