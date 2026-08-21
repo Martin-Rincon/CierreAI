@@ -21,6 +21,13 @@ export interface Cierre {
   totalRegistrado: number;
   diferencia: number;
   estado: EstadoCierre;
+  finalizadoAt: string | null;
+}
+
+export interface CierreListado {
+  fecha: string;
+  estado: EstadoCierre;
+  finalizadoAt: string | null;
 }
 
 export interface ResumenMedio {

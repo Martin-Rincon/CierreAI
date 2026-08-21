@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { run, transaction, type DbExecutor } from "@/lib/db";
-import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerDiferenciaCierre, obtenerOCrearCierreActual } from "@/lib/data";
+import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreEditable, obtenerDiferenciaCierre, reabrirCierre } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
 import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
 
@@ -40,6 +40,12 @@ function submissionId(formData: FormData): string {
   return valor;
 }
 
+function cierreId(formData: FormData): number {
+  const valor = Number(formData.get("cierre_id"));
+  if (!Number.isSafeInteger(valor) || valor <= 0) throw new Error("El cierre seleccionado no es válido.");
+  return valor;
+}
+
 async function actualizarTotales(cierreId: number, executor: DbExecutor): Promise<void> {
   await run(
     `UPDATE cierres SET
@@ -55,14 +61,16 @@ async function actualizarTotales(cierreId: number, executor: DbExecutor): Promis
   await run("UPDATE cierres SET analizado = 0, estado = CASE WHEN diferencia = 0 THEN 'conciliado' ELSE 'con_diferencia' END WHERE id = ?", [cierreId], executor);
 }
 
-function finalizar(mensaje: string): never {
+function terminarAccion(mensaje: string, fecha: string): never {
   revalidatePath("/");
-  redirect(`/?mensaje=${encodeURIComponent(mensaje)}#carga`);
+  redirect(`/?fecha=${fecha}&mensaje=${encodeURIComponent(mensaje)}#carga`);
 }
 
-async function guardarMovimiento(movimiento: MovimientoInterpretado, submission: string, metodo: "ia" | "formulario"): Promise<void> {
+async function guardarMovimiento(id: number, movimiento: MovimientoInterpretado, submission: string, metodo: "ia" | "formulario"): Promise<string> {
+  let fecha = "";
   await transaction(async (tx) => {
-    const cierre = await obtenerOCrearCierreActual(tx);
+    const cierre = await obtenerCierreEditable(id, tx);
+    fecha = cierre.fecha;
     if (movimiento.tipo === "venta") {
       await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
     } else if (movimiento.tipo === "gasto") {
@@ -72,32 +80,35 @@ async function guardarMovimiento(movimiento: MovimientoInterpretado, submission:
     }
     await actualizarTotales(cierre.id, tx);
   });
+  return fecha;
 }
 
 export async function cargarVenta(formData: FormData): Promise<never> {
-  await guardarMovimiento({ tipo: "venta", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
-  finalizar("Venta cargada");
+  const fecha = await guardarMovimiento(cierreId(formData), { tipo: "venta", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
+  terminarAccion("Venta cargada", fecha);
 }
 
 export async function cargarGasto(formData: FormData): Promise<never> {
   const categoria = texto(formData, "categoria");
   if (!categoria) throw new Error("Ingresá la categoría del gasto.");
-  await guardarMovimiento({ tipo: "gasto", monto_centavos: monto(formData), categoria, descripcion: texto(formData, "descripcion"), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
-  finalizar("Gasto cargado");
+  const fecha = await guardarMovimiento(cierreId(formData), { tipo: "gasto", monto_centavos: monto(formData), categoria, descripcion: texto(formData, "descripcion"), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
+  terminarAccion("Gasto cargado", fecha);
 }
 
 export async function cargarPago(formData: FormData): Promise<never> {
-  await guardarMovimiento({ tipo: "pago_recibido", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
-  finalizar("Pago recibido cargado");
+  const fecha = await guardarMovimiento(cierreId(formData), { tipo: "pago_recibido", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
+  terminarAccion("Pago recibido cargado", fecha);
 }
 
 export async function guardarEfectivoContado(formData: FormData): Promise<never> {
+  let fecha = "";
   await transaction(async (tx) => {
-    const cierre = await obtenerOCrearCierreActual(tx);
+    const cierre = await obtenerCierreEditable(cierreId(formData), tx);
+    fecha = cierre.fecha;
     await run("UPDATE cierres SET efectivo_contado = ? WHERE id = ?", [monto(formData), cierre.id], tx);
     await actualizarTotales(cierre.id, tx);
   });
-  finalizar("Efectivo contado guardado");
+  terminarAccion("Efectivo contado guardado", fecha);
 }
 
 export async function analizarDiferencia(cierreId: number): Promise<void> {
@@ -121,8 +132,18 @@ export async function confirmarMovimientoIa(formData: FormData): Promise<never> 
   let bruto: unknown;
   try { bruto = JSON.parse(texto(formData, "movimiento")); } catch { throw new Error("La interpretación no es válida."); }
   const movimiento = validarMovimientoInterpretado(bruto);
-  await guardarMovimiento(movimiento, submissionId(formData), "ia");
-  finalizar("Movimiento interpretado y guardado");
+  const fecha = await guardarMovimiento(cierreId(formData), movimiento, submissionId(formData), "ia");
+  terminarAccion("Movimiento interpretado y guardado", fecha);
+}
+
+export async function finalizarCierreSeleccionado(formData: FormData): Promise<void> {
+  await finalizarCierre(cierreId(formData));
+  revalidatePath("/");
+}
+
+export async function reabrirCierreSeleccionado(formData: FormData): Promise<void> {
+  await reabrirCierre(cierreId(formData));
+  revalidatePath("/");
 }
 
 export async function confirmarCausa(formData: FormData): Promise<void> {

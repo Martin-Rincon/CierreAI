@@ -1,13 +1,14 @@
-import { conciliarCierre, determinarEstadoCierre, type GastoConciliable, type MovimientoPagoConciliable, type VentaConciliable } from "@/lib/conciliacion";
-import { all, get, run, transaction, type DbExecutor } from "@/lib/db";
+import { conciliarCierre, determinarEstadoCierre, type GastoConciliable, type MovimientoPagoConciliable, type VentaConciliable } from "./conciliacion.ts";
+import { all, get, run, transaction, type DbExecutor } from "./db.ts";
 import type {
   CausaCandidataVista,
   Cierre,
+  CierreListado,
   EstadoCierre,
   MedioPago,
   MovimientoDia,
   ResumenCierre,
-} from "@/lib/types";
+} from "./types.ts";
 
 interface EntidadConciliableRow { id: number; cierre_id: number; monto: number; medio_pago: MedioPago; hora: string }
 interface CausaRow { id: number; tipo: CausaCandidataVista["tipo"]; referencia_tipo: CausaCandidataVista["referenciaTipo"]; referencia_id: number | null; monto: number; efecto: number; estado: CausaCandidataVista["estado"]; medio_pago: MedioPago | null; hora: string | null; explicacion_ia: string | null }
@@ -21,6 +22,7 @@ interface CierreRow {
   total_registrado: number;
   diferencia: number;
   estado: EstadoCierre;
+  finalizado_at: string | null;
 }
 
 interface TotalesRow {
@@ -76,8 +78,16 @@ export async function obtenerResumenCierrePorFecha(fecha: string): Promise<Resum
   return row ? construirResumen(row) : null;
 }
 
-export async function obtenerFechasDeCierres(): Promise<string[]> {
-  return (await all<{ fecha: string }>("SELECT fecha FROM cierres ORDER BY fecha DESC")).map((row) => row.fecha);
+export async function obtenerCierresParaHistorico(): Promise<CierreListado[]> {
+  return (await all<{ fecha: string; estado: EstadoCierre; finalizado_at: string | null }>("SELECT fecha, estado, finalizado_at FROM cierres ORDER BY fecha DESC")).map((row) => ({
+    fecha: row.fecha, estado: row.estado, finalizadoAt: row.finalizado_at,
+  }));
+}
+
+export async function obtenerCierresPendientes(fechaHoy = fechaLocal()): Promise<CierreListado[]> {
+  return (await all<{ fecha: string; estado: EstadoCierre; finalizado_at: string | null }>(
+    "SELECT fecha, estado, finalizado_at FROM cierres WHERE fecha < ? AND finalizado_at IS NULL ORDER BY fecha DESC", [fechaHoy],
+  )).map((row) => ({ fecha: row.fecha, estado: row.estado, finalizadoAt: row.finalizado_at }));
 }
 
 async function construirResumen(row: CierreRow): Promise<ResumenCierre> {
@@ -111,6 +121,7 @@ async function construirResumen(row: CierreRow): Promise<ResumenCierre> {
     totalRegistrado: row.total_registrado,
     diferencia: row.diferencia,
     estado: row.estado,
+    finalizadoAt: row.finalizado_at,
   };
 
   const efectivoEsperado =
@@ -166,6 +177,7 @@ function mapEntidad(row: EntidadConciliableRow): VentaConciliable {
 export async function ejecutarConciliacion(cierreId: number): Promise<void> {
   const cierre = await get<CierreRow>("SELECT * FROM cierres WHERE id = ?", [cierreId]);
   if (!cierre) throw new Error("El cierre seleccionado no existe.");
+  if (cierre.finalizado_at) throw new Error("El cierre está finalizado. Reabrilo para modificarlo.");
   const ventas = (await all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM ventas WHERE cierre_id = ?", [cierre.id])).map(mapEntidad);
   const gastos = (await all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM gastos WHERE cierre_id = ?", [cierre.id])).map(mapEntidad) as GastoConciliable[];
   const movimientosPago = (await all<EntidadConciliableRow>("SELECT id, cierre_id, monto, medio_pago, hora FROM movimientos_pago WHERE cierre_id = ?", [cierre.id])).map(mapEntidad) as MovimientoPagoConciliable[];
@@ -245,7 +257,8 @@ export async function obtenerCausasCandidatas(cierreId: number, diferencia: numb
 }
 
 export async function guardarExplicacionCausa(causaId: number, explicacion: string): Promise<void> {
-  await run("UPDATE causas_candidatas SET explicacion_ia = ? WHERE id = ?", [explicacion, causaId]);
+  await run(`UPDATE causas_candidatas SET explicacion_ia = ? WHERE id = ?
+    AND EXISTS (SELECT 1 FROM cierres WHERE cierres.id = causas_candidatas.cierre_id AND cierres.finalizado_at IS NULL)`, [explicacion, causaId]);
 }
 
 export async function obtenerDiferenciaCierre(cierreId: number): Promise<number> {
@@ -260,12 +273,33 @@ export async function cambiarEstadoCausa(causaId: number, estado: "confirmada" |
     [causaId],
   );
   if (!cierre) throw new Error("La causa seleccionada no existe.");
+  if (cierre.finalizado_at) throw new Error("El cierre está finalizado. Reabrilo para modificarlo.");
   await transaction(async (tx) => {
     await run("UPDATE causas_candidatas SET estado = ? WHERE id = ? AND cierre_id = ?", [estado, causaId, cierre.id], tx);
     const efectos = (await all<{ efecto: number }>("SELECT efecto FROM causas_candidatas WHERE cierre_id = ? AND estado = 'confirmada'", [cierre.id], tx)).map((row) => row.efecto);
     const nuevoEstado: EstadoCierre = determinarEstadoCierre(cierre.diferencia, efectos);
     await run("UPDATE cierres SET estado = ? WHERE id = ?", [nuevoEstado, cierre.id], tx);
   });
+}
+
+export async function obtenerCierreEditable(cierreId: number, executor?: DbExecutor): Promise<CierreRow> {
+  const cierre = await get<CierreRow>("SELECT * FROM cierres WHERE id = ?", [cierreId], executor);
+  if (!cierre) throw new Error("El cierre seleccionado no existe.");
+  if (cierre.finalizado_at) throw new Error("El cierre está finalizado. Reabrilo para modificarlo.");
+  return cierre;
+}
+
+export async function finalizarCierre(cierreId: number): Promise<void> {
+  const cierre = await obtenerCierreEditable(cierreId);
+  await run("UPDATE cierres SET finalizado_at = CURRENT_TIMESTAMP WHERE id = ? AND finalizado_at IS NULL", [cierre.id]);
+}
+
+export async function reabrirCierre(cierreId: number): Promise<void> {
+  const resultado = await run("UPDATE cierres SET finalizado_at = NULL WHERE id = ? AND finalizado_at IS NOT NULL", [cierreId]);
+  if (resultado.rowsAffected === 0) {
+    const existe = await get<{ id: number }>("SELECT id FROM cierres WHERE id = ?", [cierreId]);
+    if (!existe) throw new Error("El cierre seleccionado no existe.");
+  }
 }
 
 export const ESCENARIO_DEMO = {
@@ -285,6 +319,7 @@ export const ESCENARIO_DEMO = {
 
 export async function cargarDatosEscenarioDemo(confirmarReemplazo: boolean): Promise<void> {
   const cierre = await obtenerOCrearCierreActual();
+  if (cierre.finalizado_at) throw new Error("El cierre está finalizado. Reabrilo para modificarlo.");
   const tieneDatos = (await get<{ total: number }>(
     `SELECT (SELECT COUNT(*) FROM ventas WHERE cierre_id = ?)
       + (SELECT COUNT(*) FROM gastos WHERE cierre_id = ?)

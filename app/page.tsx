@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { cierreFueAnalizado, fechaLocal, obtenerCausasCandidatas, obtenerFechasDeCierres, obtenerMovimientosDelDia, obtenerResumenCierreActual, obtenerResumenCierrePorFecha } from "@/lib/data";
-import type { CausaCandidataVista, MedioPago, MovimientoDia } from "@/lib/types";
+import { cierreFueAnalizado, fechaLocal, obtenerCausasCandidatas, obtenerCierresParaHistorico, obtenerCierresPendientes, obtenerMovimientosDelDia, obtenerResumenCierreActual, obtenerResumenCierrePorFecha } from "@/lib/data";
+import type { CausaCandidataVista, CierreListado, MedioPago, MovimientoDia } from "@/lib/types";
 import { cargarGasto, cargarPago, cargarVenta, confirmarCausa, descartarCausa, guardarEfectivoContado } from "./actions";
 import { AnalysisButton } from "./analysis-button";
 import { SubmitButton } from "./submit-button";
 import { NaturalLanguageInput } from "./natural-language-input";
 import { DemoControls } from "./demo-controls";
+import { LifecycleControls } from "./lifecycle-controls";
 import { explicacionDeterministica, iaConfigurada } from "@/lib/ia";
 
 export const dynamic = "force-dynamic";
@@ -43,13 +44,26 @@ function fechaLarga(fecha: string): string {
   }).format(new Date(year, month - 1, day));
 }
 
+function fechaCorta(fecha: string): string {
+  const [year, month, day] = fecha.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function etiquetaEstado(cierre: CierreListado): string {
+  if (cierre.finalizadoAt) return "Finalizado";
+  if (cierre.estado === "conciliado") return "Conciliado";
+  if (cierre.estado === "resuelto") return "Resuelto";
+  if (cierre.estado === "con_diferencia") return "En curso · Con diferencia";
+  return "En curso";
+}
+
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ mensaje?: string; fecha?: string }> }) {
   const parametros = await searchParams;
   const hoy = fechaLocal();
   const fechaSeleccionada = /^\d{4}-\d{2}-\d{2}$/.test(parametros.fecha ?? "") ? parametros.fecha! : hoy;
-  const fechas = await obtenerFechasDeCierres();
+  const [cierresHistoricos, pendientes] = await Promise.all([obtenerCierresParaHistorico(), obtenerCierresPendientes(hoy)]);
   const resumen = fechaSeleccionada === hoy ? await obtenerResumenCierreActual() : await obtenerResumenCierrePorFecha(fechaSeleccionada);
-  if (!resumen) return <DashboardVacio fecha={fechaSeleccionada} fechas={fechas} />;
+  if (!resumen) return <DashboardVacio fecha={fechaSeleccionada} cierres={cierresHistoricos} pendientes={pendientes} />;
   const { cierre } = resumen;
   const [movimientos, causas, analizado] = await Promise.all([
     obtenerMovimientosDelDia(cierre.id),
@@ -59,6 +73,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const { mensaje } = parametros;
   const concilia = cierre.diferencia === 0;
   const resuelto = cierre.estado === "resuelto";
+  const finalizado = cierre.finalizadoAt !== null;
+  const editable = !finalizado;
   const horaActual = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
@@ -74,13 +90,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           </div>
         </div>
         <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm">
-          {fechaSeleccionada === hoy ? "Hoy" : "Histórico"}
+          {finalizado ? "Finalizado" : cierre.estado === "conciliado" ? "Conciliado" : cierre.estado === "resuelto" ? "Resuelto" : "En curso"}
         </span>
       </header>
 
-      <SelectorFecha fecha={fechaSeleccionada} fechas={fechas} />
+      {pendientes.length > 0 && <AvisoPendiente pendientes={pendientes} />}
+      <SelectorFecha fecha={fechaSeleccionada} cierres={cierresHistoricos} />
 
-      {fechaSeleccionada === hoy && <DemoControls tieneMovimientos={resumen.tieneMovimientos} />}
+      {fechaSeleccionada === hoy && editable && <DemoControls tieneMovimientos={resumen.tieneMovimientos} />}
 
       <section className="mb-6">
         <p className="mb-1 text-sm font-semibold capitalize text-blue-700">
@@ -93,6 +110,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           Compará lo que debería haber con lo que efectivamente registraste.
         </p>
       </section>
+
+      {finalizado && <section className="mb-5 rounded-2xl border border-emerald-300 bg-emerald-50 p-5 text-emerald-950">
+        <h2 className="font-bold">Cierre finalizado</h2>
+        <p className="mt-1 text-sm">Finalizado el {new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date(`${cierre.finalizadoAt!.replace(" ", "T")}Z`))}. Se conserva toda la información en modo consulta.</p>
+      </section>}
+
+      <LifecycleControls cierreId={cierre.id} diferencia={cierre.diferencia} resuelto={resuelto} finalizado={finalizado} />
 
       <section
         aria-label="Resumen general del cierre"
@@ -142,9 +166,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         ))}
       </section>
 
-      {fechaSeleccionada === hoy && <NaturalLanguageInput configurada={iaConfigurada()} />}
+      {editable && <NaturalLanguageInput configurada={iaConfigurada()} cierreId={cierre.id} />}
 
-      {fechaSeleccionada === hoy ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {editable ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 sm:flex sm:items-end sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-950">Carga manual</h2>
@@ -153,19 +177,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           {mensaje && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 sm:mt-0">{mensaje}</p>}
         </div>
         <div className="grid gap-4 lg:grid-cols-3">
-          <FormularioMovimiento titulo="Nueva venta" action={cargarVenta} horaActual={horaActual} />
-          <FormularioMovimiento titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
-          <FormularioMovimiento titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
+          <FormularioMovimiento cierreId={cierre.id} titulo="Nueva venta" action={cargarVenta} horaActual={horaActual} />
+          <FormularioMovimiento cierreId={cierre.id} titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
+          <FormularioMovimiento cierreId={cierre.id} titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
         </div>
-      </section> : <section className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Estás viendo un cierre histórico. Sus movimientos se muestran en modo consulta.</section>}
+      </section> : <section className="mb-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">Este cierre está finalizado. Sus movimientos se muestran en modo consulta; podés reabrirlo para editarlo.</section>}
 
-      {fechaSeleccionada === hoy && <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {editable && <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
             <h2 className="font-bold text-slate-950">Efectivo contado</h2>
             <p className="mt-1 text-sm text-slate-600">Podés cargarlo ahora y editarlo cada vez que vuelvas a contar la caja.</p>
           </div>
           <form action={guardarEfectivoContado} className="flex flex-col gap-2 sm:flex-row">
+            <input type="hidden" name="cierre_id" value={cierre.id} />
             <CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" />
             <SubmitButton idle="Guardar" pending="Guardando…" className="self-end rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700" />
           </form>
@@ -220,11 +245,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </p>
             </div>
           </div>
-          <AnalysisButton cierreId={cierre.id} />
+          {editable && <AnalysisButton cierreId={cierre.id} />}
         </section>
       )}
 
-      {analizado && (causas.length > 0 ? <ResultadoAnalisis causas={causas} diferencia={cierre.diferencia} resuelto={resuelto} /> : <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">Análisis completado</h2><p className="mt-1 text-sm text-slate-600">No se encontraron causas candidatas con los criterios determinísticos disponibles.</p></section>)}
+      {analizado && (causas.length > 0 ? <ResultadoAnalisis causas={causas} diferencia={cierre.diferencia} resuelto={resuelto} editable={editable} /> : <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="font-bold text-slate-950">Análisis completado</h2><p className="mt-1 text-sm text-slate-600">No se encontraron causas candidatas con los criterios determinísticos disponibles.</p></section>)}
 
       <section className="mt-5 grid grid-cols-3 gap-2" aria-label="Actividad del día">
         <Count label="Ventas" value={resumen.cantidadVentas} />
@@ -235,34 +260,41 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   );
 }
 
-function SelectorFecha({ fecha, fechas }: { fecha: string; fechas: string[] }) {
+function SelectorFecha({ fecha, cierres }: { fecha: string; cierres: CierreListado[] }) {
   return <form method="get" className="mb-6 flex flex-wrap items-end gap-2 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
     <label className="block flex-1 text-xs font-bold text-slate-600">Fecha del cierre<input type="date" name="fecha" defaultValue={fecha} list="fechas-existentes" className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>
-    <datalist id="fechas-existentes">{fechas.map((item) => <option key={item} value={item} />)}</datalist>
+    <datalist id="fechas-existentes">{cierres.map((item) => <option key={item.fecha} value={item.fecha}>{etiquetaEstado(item)}</option>)}</datalist>
     <button type="submit" className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto">Ver cierre</button>
+    {cierres.length > 0 && <p className="w-full text-xs text-slate-500">{cierres.map((item) => `${fechaCorta(item.fecha)} · ${etiquetaEstado(item)}`).join("  |  ")}</p>}
   </form>;
 }
 
-function DashboardVacio({ fecha, fechas }: { fecha: string; fechas: string[] }) {
+function AvisoPendiente({ pendientes }: { pendientes: CierreListado[] }) {
+  const reciente = pendientes[0];
+  return <section className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-5 sm:flex sm:items-center sm:justify-between sm:gap-4"><div><h2 className="font-bold text-amber-950">Tenés un cierre pendiente del {fechaCorta(reciente.fecha)}</h2>{pendientes.length > 1 && <p className="mt-1 text-sm text-amber-800">Hay {pendientes.length} cierres anteriores sin finalizar. Podés encontrarlos en el selector histórico.</p>}</div><a href={`/?fecha=${reciente.fecha}`} className="mt-3 inline-block rounded-lg bg-amber-900 px-4 py-2.5 text-sm font-bold text-white sm:mt-0">Continuar cierre</a></section>;
+}
+
+function DashboardVacio({ fecha, cierres, pendientes }: { fecha: string; cierres: CierreListado[]; pendientes: CierreListado[] }) {
   return <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-5 sm:px-6 lg:px-8">
     <header className="mb-7 flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-blue-600 text-white"><MarkIcon /></div><div><p className="text-xl font-bold text-slate-950">CierreAI</p><p className="text-xs text-slate-500">Control de caja</p></div></header>
-    <SelectorFecha fecha={fecha} fechas={fechas} />
+    {pendientes.length > 0 && <AvisoPendiente pendientes={pendientes} />}
+    <SelectorFecha fecha={fecha} cierres={cierres} />
     <section className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm"><h1 className="text-xl font-bold text-slate-950">No existe un cierre para esta fecha</h1><p className="mt-2 text-sm text-slate-600">No se creó ningún registro al navegar a {fecha}. Elegí otra fecha para consultar un cierre existente.</p></section>
   </main>;
 }
 
-function ResultadoAnalisis({ causas, diferencia, resuelto }: { causas: CausaCandidataVista[]; diferencia: number; resuelto: boolean }) {
+function ResultadoAnalisis({ causas, diferencia, resuelto, editable }: { causas: CausaCandidataVista[]; diferencia: number; resuelto: boolean; editable: boolean }) {
   const principal = causas.find((causa) => causa.esPrincipal);
   const ordenadas = principal ? [principal, ...causas.filter((causa) => causa.id !== principal.id)] : causas;
   return <section className="mt-5 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm" aria-labelledby="resultado-title">
     <p className="text-xs font-bold uppercase tracking-wider text-amber-700">Resultado del análisis</p>
     <h2 id="resultado-title" className="mt-1 text-xl font-bold text-slate-950">{causas.length === 1 ? "Posible causa encontrada" : "Posibles causas encontradas"}</h2>
     <p className={`mt-2 text-sm ${resuelto ? "text-emerald-800" : "text-amber-800"}`}>{resuelto ? "Las causas confirmadas explican completamente la diferencia del cierre." : principal ? "Una causa posible explica por sí sola toda la diferencia. Revisá la evidencia antes de confirmarla." : "Ninguna causa explica por sí sola toda la diferencia. Revisá todas las posibilidades antes de confirmar."}</p>
-    <div className="mt-4 space-y-3">{ordenadas.map((causa) => <CausaCard key={causa.id} causa={causa} diferencia={diferencia} />)}</div>
+    <div className="mt-4 space-y-3">{ordenadas.map((causa) => <CausaCard key={causa.id} causa={causa} diferencia={diferencia} editable={editable} />)}</div>
   </section>;
 }
 
-function CausaCard({ causa, diferencia }: { causa: CausaCandidataVista; diferencia: number }) {
+function CausaCard({ causa, diferencia, editable }: { causa: CausaCandidataVista; diferencia: number; editable: boolean }) {
   const entidad = causa.tipo === "venta_sin_pago" ? `Venta #${causa.referenciaId}` : causa.tipo === "pago_sin_venta" ? `Movimiento de pago #${causa.referenciaId}` : "Efectivo del cierre";
   const explicacion = causa.explicacionIa ?? explicacionDeterministica(causa);
   return <article className={`min-w-0 rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
@@ -276,14 +308,15 @@ function CausaCard({ causa, diferencia }: { causa: CausaCandidataVista; diferenc
       <div className="sm:col-span-2"><dt className="font-bold text-slate-800">Resultado de la búsqueda</dt><dd>{causa.tipo === "diferencia_efectivo" ? "El efectivo esperado y el contado no coinciden." : causa.tipo === "venta_sin_pago" ? "No se encontró un pago compatible para esta venta." : "No se encontró una venta compatible para este pago recibido."}</dd></div>
       {causa.tipo === "diferencia_efectivo" && <><div><dt className="font-bold text-slate-800">Efectivo esperado</dt><dd>{causa.efectivoEsperado == null ? "Sin dato" : pesos(causa.efectivoEsperado)}</dd></div><div><dt className="font-bold text-slate-800">Efectivo contado</dt><dd>{causa.efectivoContado == null ? "Sin dato" : pesos(causa.efectivoContado)}</dd></div><div className="sm:col-span-2"><dt className="font-bold text-slate-800">Diferencia de efectivo</dt><dd>{pesosConSigno(causa.efecto)}</dd></div></>}
     </dl></details>
-    {causa.estado === "pendiente" && <div className="mt-3 flex gap-2"><form action={confirmarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Confirmar causa" pending="Confirmando…" className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white" /></form><form action={descartarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Descartar" pending="Descartando…" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700" /></form></div>}
+    {editable && causa.estado === "pendiente" && <div className="mt-3 flex gap-2"><form action={confirmarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Confirmar causa" pending="Confirmando…" className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white" /></form><form action={descartarCausa}><input type="hidden" name="causa_id" value={causa.id} /><SubmitButton idle="Descartar" pending="Descartando…" className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700" /></form></div>}
   </article>;
 }
 
-function FormularioMovimiento({ titulo, action, horaActual, gasto = false }: { titulo: string; action: (formData: FormData) => Promise<never>; horaActual: string; gasto?: boolean }) {
+function FormularioMovimiento({ cierreId, titulo, action, horaActual, gasto = false }: { cierreId: number; titulo: string; action: (formData: FormData) => Promise<never>; horaActual: string; gasto?: boolean }) {
   return (
     <form action={action} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <input type="hidden" name="submission_id" value={randomUUID()} />
+      <input type="hidden" name="cierre_id" value={cierreId} />
       <h3 className="mb-3 font-bold text-slate-900">{titulo}</h3>
       <div className="space-y-3">
         <CampoMonto label="Monto" />
