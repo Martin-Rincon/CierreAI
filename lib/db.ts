@@ -90,10 +90,19 @@ async function migrate(): Promise<void> {
       explicacion_ia TEXT,
       estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'confirmada', 'descartada'))
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS csv_importaciones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cierre_id INTEGER NOT NULL REFERENCES cierres(id) ON DELETE CASCADE,
+      fingerprint TEXT NOT NULL,
+      cantidad_movimientos INTEGER NOT NULL CHECK (cantidad_movimientos > 0),
+      creado_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (cierre_id, fingerprint)
+    ) STRICT;
     CREATE INDEX IF NOT EXISTS idx_ventas_cierre_medio ON ventas(cierre_id, medio_pago, hora);
     CREATE INDEX IF NOT EXISTS idx_gastos_cierre_medio ON gastos(cierre_id, medio_pago, hora);
     CREATE INDEX IF NOT EXISTS idx_movimientos_cierre_medio ON movimientos_pago(cierre_id, medio_pago, hora);
     CREATE INDEX IF NOT EXISTS idx_causas_cierre ON causas_candidatas(cierre_id, estado);
+    CREATE INDEX IF NOT EXISTS idx_csv_importaciones_cierre ON csv_importaciones(cierre_id);
   `);
 
   for (const table of ["ventas", "gastos", "movimientos_pago"]) {

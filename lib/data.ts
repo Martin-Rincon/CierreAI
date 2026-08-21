@@ -333,6 +333,7 @@ async function cantidadDatosCierre(cierreId: number, executor?: DbExecutor): Pro
 }
 
 async function escribirEscenarioDemo(cierreId: number, tx: DbExecutor): Promise<void> {
+    await run("DELETE FROM csv_importaciones WHERE cierre_id = ?", [cierreId], tx);
     await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierreId], tx);
     await run("DELETE FROM ventas WHERE cierre_id = ?", [cierreId], tx);
     await run("DELETE FROM gastos WHERE cierre_id = ?", [cierreId], tx);
@@ -377,6 +378,7 @@ export async function vaciarDatosCierre(cierreId: number, soloSiDemo = false): P
     const cierre = await obtenerCierreEditable(cierreId, tx);
     if (soloSiDemo && cierre.es_demo !== 1) throw new Error("Este cierre no está usando el escenario demo.");
     fecha = cierre.fecha;
+    await run("DELETE FROM csv_importaciones WHERE cierre_id = ?", [cierre.id], tx);
     await run("DELETE FROM causas_candidatas WHERE cierre_id = ?", [cierre.id], tx);
     await run("DELETE FROM ventas WHERE cierre_id = ?", [cierre.id], tx);
     await run("DELETE FROM gastos WHERE cierre_id = ?", [cierre.id], tx);

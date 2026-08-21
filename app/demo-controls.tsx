@@ -15,7 +15,16 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
   const vaciadoEnCurso = useRef(false);
   const operacionPendiente = pending || empezandoConMisDatos;
 
+  function limpiarFeedbackAnterior() {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("mensaje") && !url.searchParams.has("actualizado")) return;
+    url.searchParams.delete("mensaje");
+    url.searchParams.delete("actualizado");
+    router.replace(`${url.pathname}${url.search}${url.hash}`, { scroll: false });
+  }
+
   function ejecutar(tarea: () => Promise<void>) {
+    limpiarFeedbackAnterior();
     setError(null);
     startTransition(async () => {
       try { await tarea(); router.refresh(); }
@@ -25,6 +34,7 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
 
   function cargar() {
     if (tieneMovimientos && !esDemo) {
+      limpiarFeedbackAnterior();
       setError("Este cierre ya contiene datos. Para cargar el escenario demo primero tenés que vaciarlo.");
       return;
     }
@@ -34,6 +44,7 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
   async function confirmarEmpezarConMisDatos() {
     if (vaciadoEnCurso.current || empezandoConMisDatos) return;
     vaciadoEnCurso.current = true;
+    limpiarFeedbackAnterior();
     setEmpezandoConMisDatos(true);
     setError(null);
     try {
@@ -59,6 +70,7 @@ export function DemoControls({ cierreId, fecha, tieneMovimientos, esDemo }: { ci
     }
     if (vaciadoEnCurso.current || pending) return;
     vaciadoEnCurso.current = true;
+    limpiarFeedbackAnterior();
     setError(null);
     startTransition(async () => {
       try {

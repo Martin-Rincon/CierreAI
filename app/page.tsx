@@ -8,6 +8,7 @@ import { NaturalLanguageInput } from "./natural-language-input";
 import { DemoControls } from "./demo-controls";
 import { LifecycleControls } from "./lifecycle-controls";
 import { explicacionDeterministica, iaConfigurada } from "@/lib/ia";
+import { CsvImport } from "./csv-import";
 
 export const dynamic = "force-dynamic";
 
@@ -168,6 +169,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </section>
 
       {editable && !cierre.esDemo && <NaturalLanguageInput configurada={iaConfigurada()} cierreId={cierre.id} />}
+
+      {editable && <CsvImport cierreId={cierre.id} esDemo={cierre.esDemo} />}
 
       {editable && !cierre.esDemo ? <section id="carga" className="mb-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 sm:flex sm:items-end sm:justify-between">

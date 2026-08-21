@@ -6,6 +6,8 @@ import { run, transaction, type DbExecutor } from "@/lib/db";
 import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreParaCargaReal, obtenerDiferenciaCierre, reabrirCierre, restablecerDatosEscenarioDemo, vaciarDatosCierre } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
 import { MEDIOS_PAGO, type MedioPago } from "@/lib/types";
+import { CsvValidationError } from "@/lib/csv";
+import { importarCsv, prepararImportacionCsv } from "@/lib/csv-import";
 
 function texto(formData: FormData, campo: string): string {
   return String(formData.get(campo) ?? "").trim();
@@ -176,4 +178,33 @@ export async function vaciarCierreSeleccionado(id: number): Promise<string> {
   const fecha = await vaciarDatosCierre(id);
   revalidatePath("/");
   return fecha;
+}
+
+export type ResultadoPreviewCsv =
+  | { ok: true; movimientos: Array<{ tipo: "venta" | "gasto" | "pago"; montoCentavos: number; medioPago: MedioPago; hora: string; categoria: string }>; resumen: { ventas: number; gastos: number; pagos: number }; tieneMovimientos: boolean }
+  | { ok: false; errores: string[] };
+
+function erroresCsv(error: unknown): string[] {
+  if (error instanceof CsvValidationError) return error.errores;
+  return [error instanceof Error ? error.message : "No se pudo procesar el CSV."];
+}
+
+export async function previsualizarCsv(cierre: number, contenido: string, bytes: number): Promise<ResultadoPreviewCsv> {
+  try {
+    const resultado = await prepararImportacionCsv(cierre, contenido, bytes);
+    return {
+      ok: true,
+      movimientos: resultado.movimientos.map(({ tipo, montoCentavos, medioPago, hora, categoria }) => ({ tipo, montoCentavos, medioPago, hora, categoria })),
+      resumen: resultado.resumen,
+      tieneMovimientos: resultado.tieneMovimientos,
+    };
+  } catch (error) { return { ok: false, errores: erroresCsv(error) }; }
+}
+
+export async function confirmarImportacionCsv(cierre: number, contenido: string, bytes: number): Promise<{ ok: true; cantidad: number; fecha: string } | { ok: false; errores: string[] }> {
+  try {
+    const resultado = await importarCsv(cierre, contenido, bytes);
+    revalidatePath("/");
+    return { ok: true, ...resultado };
+  } catch (error) { return { ok: false, errores: erroresCsv(error) }; }
 }
