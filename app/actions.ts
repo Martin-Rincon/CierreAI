@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { run, transaction, type DbExecutor } from "@/lib/db";
-import { cambiarEstadoCausa, cargarDatosEscenarioDemo, ejecutarConciliacion, eliminarMovimiento, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreParaCargaReal, obtenerDiferenciaCierre, reabrirCierre, restablecerDatosEscenarioDemo, vaciarDatosCierre } from "@/lib/data";
+import { cambiarEstadoCausa, cargarDatosEscenarioDemo, EfectivoInsuficienteError, ejecutarConciliacion, eliminarMovimiento, finalizarCierre, guardarExplicacionCausa, obtenerCausasCandidatas, obtenerCierreParaCargaReal, obtenerDiferenciaCierre, obtenerEfectivoDisponible, reabrirCierre, restablecerDatosEscenarioDemo, vaciarDatosCierre, validarGastoEfectivo } from "@/lib/data";
 import { explicarCausa, interpretarMovimiento, validarMovimientoInterpretado, type MovimientoInterpretado, type ResultadoInterpretacion } from "@/lib/ia";
 import { MEDIOS_PAGO, type MedioPago, type TipoMovimiento } from "@/lib/types";
 import { CsvValidationError } from "@/lib/csv";
@@ -18,6 +18,15 @@ function monto(formData: FormData): number {
   const numero = Number(original.replace(",", "."));
   if (!Number.isFinite(numero) || numero <= 0 || !/^\d+(?:[.,]\d{1,2})?$/.test(original)) {
     throw new Error("Ingresá un monto válido mayor que cero.");
+  }
+  return Math.round(numero * 100);
+}
+
+function montoNoNegativo(formData: FormData): number {
+  const original = texto(formData, "monto");
+  const numero = Number(original.replace(",", "."));
+  if (!Number.isFinite(numero) || numero < 0 || !/^\d+(?:[.,]\d{1,2})?$/.test(original)) {
+    throw new Error("Ingresá un monto válido igual o mayor que cero.");
   }
   return Math.round(numero * 100);
 }
@@ -51,9 +60,9 @@ function cierreId(formData: FormData): number {
 async function actualizarTotales(cierreId: number, executor: DbExecutor): Promise<void> {
   await run(
     `UPDATE cierres SET
-      total_esperado = efectivo_inicial
-        + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ?), 0)
-        - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ?), 0),
+      total_esperado = CASE WHEN efectivo_contado IS NULL THEN 0 ELSE efectivo_inicial END
+        + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ? AND (medio_pago != 'efectivo' OR cierres.efectivo_contado IS NOT NULL)), 0)
+        - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ? AND (medio_pago != 'efectivo' OR cierres.efectivo_contado IS NOT NULL)), 0),
       total_registrado = COALESCE(efectivo_contado, 0)
         + COALESCE((SELECT SUM(monto) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo'), 0)
     WHERE id = ?`,
@@ -76,6 +85,7 @@ async function guardarMovimiento(id: number, movimiento: MovimientoInterpretado,
     if (movimiento.tipo === "venta") {
       await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
     } else if (movimiento.tipo === "gasto") {
+      if (movimiento.medio_pago === "efectivo") await validarGastoEfectivo(cierre.id, movimiento.monto_centavos, tx);
       await run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.categoria, movimiento.descripcion ?? "", movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
     } else {
       await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga, submission_id) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(submission_id) WHERE submission_id IS NOT NULL DO NOTHING", [cierre.id, movimiento.monto_centavos, movimiento.medio_pago, movimiento.hora, metodo, submission], tx);
@@ -97,6 +107,24 @@ export async function cargarGasto(formData: FormData): Promise<never> {
   terminarAccion("Gasto cargado", fecha);
 }
 
+export type ResultadoCargaGasto = {
+  ok: false;
+  tipo: "efectivo_insuficiente";
+  efectivoDisponible: number;
+  gastoIngresado: number;
+};
+
+export async function cargarGastoConResultado(formData: FormData): Promise<ResultadoCargaGasto> {
+  try {
+    return await cargarGasto(formData);
+  } catch (error) {
+    if (error instanceof EfectivoInsuficienteError) {
+      return { ok: false, tipo: "efectivo_insuficiente", efectivoDisponible: error.disponible, gastoIngresado: error.gasto };
+    }
+    throw error;
+  }
+}
+
 export async function cargarPago(formData: FormData): Promise<never> {
   const fecha = await guardarMovimiento(cierreId(formData), { tipo: "pago_recibido", monto_centavos: monto(formData), medio_pago: medio(formData), hora: hora(formData) }, submissionId(formData), "formulario");
   terminarAccion("Pago recibido cargado", fecha);
@@ -107,10 +135,26 @@ export async function guardarEfectivoContado(formData: FormData): Promise<never>
   await transaction(async (tx) => {
     const cierre = await obtenerCierreParaCargaReal(cierreId(formData), tx);
     fecha = cierre.fecha;
-    await run("UPDATE cierres SET efectivo_contado = ? WHERE id = ?", [monto(formData), cierre.id], tx);
+    await run("UPDATE cierres SET efectivo_contado = ? WHERE id = ?", [montoNoNegativo(formData), cierre.id], tx);
     await actualizarTotales(cierre.id, tx);
   });
   terminarAccion("Efectivo contado guardado", fecha);
+}
+
+export async function guardarEfectivoInicial(formData: FormData): Promise<never> {
+  let fecha = "";
+  await transaction(async (tx) => {
+    const cierre = await obtenerCierreParaCargaReal(cierreId(formData), tx);
+    fecha = cierre.fecha;
+    const nuevo = montoNoNegativo(formData);
+    const disponibleActual = await obtenerEfectivoDisponible(cierre.id, tx);
+    if (disponibleActual - cierre.efectivo_inicial + nuevo < 0) {
+      throw new Error("El efectivo inicial no puede dejar el efectivo esperado por debajo de cero. Revisá los movimientos en efectivo.");
+    }
+    await run("UPDATE cierres SET efectivo_inicial = ? WHERE id = ?", [nuevo, cierre.id], tx);
+    await actualizarTotales(cierre.id, tx);
+  });
+  terminarAccion("Efectivo inicial guardado", fecha);
 }
 
 export async function analizarDiferencia(cierreId: number): Promise<void> {
@@ -126,8 +170,9 @@ export async function analizarDiferencia(cierreId: number): Promise<void> {
   revalidatePath("/");
 }
 
-export async function interpretarConIa(textoUsuario: string): Promise<ResultadoInterpretacion> {
-  return interpretarMovimiento(textoUsuario);
+export async function interpretarConIa(textoUsuario: string, horaLocalUsuario: string): Promise<ResultadoInterpretacion> {
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(horaLocalUsuario)) throw new Error("La hora local no es válida.");
+  return interpretarMovimiento(textoUsuario, new Date(), undefined, horaLocalUsuario);
 }
 
 export async function confirmarMovimientoIa(formData: FormData): Promise<never> {
@@ -136,6 +181,17 @@ export async function confirmarMovimientoIa(formData: FormData): Promise<never> 
   const movimiento = validarMovimientoInterpretado(bruto);
   const fecha = await guardarMovimiento(cierreId(formData), movimiento, submissionId(formData), "ia");
   terminarAccion("Movimiento interpretado y guardado", fecha);
+}
+
+export async function confirmarMovimientoIaConResultado(formData: FormData): Promise<ResultadoCargaGasto> {
+  try {
+    return await confirmarMovimientoIa(formData);
+  } catch (error) {
+    if (error instanceof EfectivoInsuficienteError) {
+      return { ok: false, tipo: "efectivo_insuficiente", efectivoDisponible: error.disponible, gastoIngresado: error.gasto };
+    }
+    throw error;
+  }
 }
 
 export async function finalizarCierreSeleccionado(formData: FormData): Promise<void> {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import Image from "next/image";
 import { cierreFueAnalizado, fechaLocal, obtenerCausasCandidatas, obtenerCierresParaHistorico, obtenerCierresPendientes, obtenerMovimientosDelDia, obtenerResumenCierreActual, obtenerResumenCierrePorFecha } from "@/lib/data";
 import type { CausaCandidataVista, CierreListado, MedioPago } from "@/lib/types";
-import { cargarGasto, cargarPago, cargarVenta, confirmarCausa, descartarCausa, guardarEfectivoContado } from "./actions";
+import { cargarPago, cargarVenta, confirmarCausa, descartarCausa, guardarEfectivoContado, guardarEfectivoInicial } from "./actions";
 import { AnalysisButton } from "./analysis-button";
 import { SubmitButton } from "./submit-button";
 import { NaturalLanguageInput } from "./natural-language-input";
@@ -11,6 +11,8 @@ import { LifecycleControls } from "./lifecycle-controls";
 import { explicacionDeterministica, iaConfigurada } from "@/lib/ia";
 import { CsvImport } from "./csv-import";
 import { MovementsList } from "./movements-list";
+import { ExpenseForm } from "./expense-form";
+import { LocalTimeInput } from "./local-time-input";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +80,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const resuelto = cierre.estado === "resuelto";
   const finalizado = cierre.finalizadoAt !== null;
   const editable = !finalizado;
-  const horaActual = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false });
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-6xl px-4 pb-12 pt-5 sm:px-6 lg:px-8">
@@ -124,7 +125,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <Total
           label="Diferencia"
           value={pesos(cierre.diferencia)}
-          tone={concilia || resuelto ? "success" : "danger"}
+          tone={concilia ? "success" : "danger"}
           prominent
         />
       </section>
@@ -141,12 +142,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </div>
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-                  item.diferencia === 0
+                  item.diferencia == null
+                    ? "bg-amber-50 text-amber-800"
+                    : item.diferencia === 0
                     ? "bg-emerald-50 text-emerald-700"
                     : "bg-red-50 text-red-700"
                 }`}
               >
-                {item.diferencia === 0 ? "Concilia" : pesos(item.diferencia)}
+                {item.diferencia == null ? "Pendiente" : item.diferencia === 0 ? "Concilia" : pesos(item.diferencia)}
               </span>
             </div>
             <h2 className="mb-4 font-bold text-slate-900">{etiquetasMedio[item.medio]}</h2>
@@ -157,8 +160,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </div>
               <div className="flex justify-between gap-4 text-slate-500">
                 <dt>Registrado</dt>
-                <dd className="font-semibold tabular-nums text-slate-800">{pesos(item.registrado)}</dd>
+                <dd className="font-semibold tabular-nums text-slate-800">{item.registrado == null ? "Sin dato" : pesos(item.registrado)}</dd>
               </div>
+              {item.medio === "efectivo" && <div className="flex justify-between gap-4 text-slate-500"><dt>Efectivo inicial</dt><dd className="font-semibold tabular-nums text-slate-800">{pesos(cierre.efectivoInicial)}</dd></div>}
             </dl>
           </article>
         ))}
@@ -170,6 +174,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <h2 className="font-bold text-blue-950">Todavía no cargaste movimientos</h2>
             <p className="mt-1 text-sm text-blue-800">Elegí una forma de carga para empezar el cierre.</p>
           </div>
+        ) : cierre.efectivoContado == null ? (
+          <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5"><h2 className="font-bold text-amber-950">Conciliación de efectivo pendiente</h2><p className="mt-1 text-sm text-amber-800">Ingresá el efectivo contado para completar la conciliación de efectivo.</p></div>
         ) : concilia ? (
           <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-5 sm:flex sm:items-center sm:justify-between sm:gap-5">
             <div className="flex items-center gap-4"><div className="grid size-11 shrink-0 place-items-center rounded-full bg-emerald-600 text-white"><CheckIcon /></div><div><h2 className="text-lg font-bold text-emerald-950">Todo concilia</h2><p className="mt-0.5 text-sm text-emerald-800">No hay diferencias para revisar.</p></div></div>
@@ -211,14 +217,18 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           {mensaje && <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 sm:mt-0">{mensaje}</p>}
         </div>
         <div className="grid gap-4 lg:grid-cols-3">
-          <FormularioMovimiento cierreId={cierre.id} titulo="Nueva venta" action={cargarVenta} horaActual={horaActual} />
-          <FormularioMovimiento cierreId={cierre.id} titulo="Nuevo gasto" action={cargarGasto} horaActual={horaActual} gasto />
-          <FormularioMovimiento cierreId={cierre.id} titulo="Pago recibido" action={cargarPago} horaActual={horaActual} />
+          <FormularioMovimiento cierreId={cierre.id} titulo="Nueva venta" action={cargarVenta} />
+          <ExpenseForm cierreId={cierre.id} />
+          <FormularioMovimiento cierreId={cierre.id} titulo="Pago recibido" action={cargarPago} />
         </div>
         <div className="mt-5 border-t border-slate-200 pt-5">
+          <div className="mb-5 grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div><h3 className="font-bold text-slate-950">Efectivo inicial en caja</h3><p className="mt-1 text-sm text-slate-600">Dinero disponible en caja al comenzar el día.</p></div>
+            <form action={guardarEfectivoInicial} className="flex flex-col gap-2 sm:flex-row"><input type="hidden" name="cierre_id" value={cierre.id} /><CampoMonto defaultValue={String(cierre.efectivoInicial / 100)} label="Monto inicial" permitirCero /><SubmitButton idle="Guardar efectivo inicial" pending="Guardando…" className="w-full self-end rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto" /></form>
+          </div>
           <div className="grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
             <div><h3 className="font-bold text-slate-950">Efectivo contado</h3><p className="mt-1 text-sm text-slate-600">Ingresá el total contado en caja. Podés actualizarlo si volvés a contar.</p></div>
-            <form action={guardarEfectivoContado} className="flex flex-col gap-2 sm:flex-row"><input type="hidden" name="cierre_id" value={cierre.id} /><CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" /><SubmitButton idle="Guardar efectivo" pending="Guardando…" className="w-full self-end rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto" /></form>
+            <form action={guardarEfectivoContado} className="flex flex-col gap-2 sm:flex-row"><input type="hidden" name="cierre_id" value={cierre.id} /><CampoMonto defaultValue={cierre.efectivoContado == null ? "" : String(cierre.efectivoContado / 100)} label="Monto contado" permitirCero /><SubmitButton idle="Guardar efectivo" pending="Guardando…" className="w-full self-end rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto" /></form>
           </div>
         </div>
       </section> : null}
@@ -239,7 +249,7 @@ function SelectorFecha({ fecha, cierres }: { fecha: string; cierres: CierreLista
     <label className="block flex-1 text-xs font-bold text-slate-600">Fecha del cierre<input type="date" name="fecha" defaultValue={fecha} list="fechas-existentes" className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>
     <datalist id="fechas-existentes">{cierres.map((item) => <option key={item.fecha} value={item.fecha}>{etiquetaEstado(item)}</option>)}</datalist>
     <button type="submit" className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700 sm:w-auto">Ver cierre</button>
-    {cierres.length > 0 && <p className="w-full text-xs text-slate-500">{cierres.map((item) => `${fechaCorta(item.fecha)} · ${etiquetaEstado(item)}`).join("  |  ")}</p>}
+    {cierres.length > 0 && <div className="w-full overflow-x-auto pb-1"><p className="w-max whitespace-nowrap text-xs text-slate-500">{cierres.map((item) => `${fechaCorta(item.fecha)} · ${etiquetaEstado(item)}`).join("  |  ")}</p></div>}
   </form>;
 }
 
@@ -273,7 +283,7 @@ function CausaCard({ causa, diferencia, editable }: { causa: CausaCandidataVista
   const explicacion = causa.explicacionIa ?? explicacionDeterministica(causa);
   return <article className={`min-w-0 rounded-xl border p-4 ${causa.esPrincipal ? "border-amber-400 bg-amber-50" : "border-slate-200"}`}>
     {causa.esPrincipal && <p className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-800">Explica exactamente la diferencia</p>}
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{causa.estado === "pendiente" ? "Por revisar" : causa.estado === "confirmada" ? "Confirmada" : "Descartada"}</span></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-bold text-slate-950">{entidad}</h3><p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{pesos(causa.monto)}</p>{causa.medioPago && <p className="text-sm text-slate-600">{etiquetasMedio[causa.medioPago]} · {causa.hora}</p>}</div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${causa.estado === "confirmada" ? "bg-emerald-100 text-emerald-800" : causa.estado === "descartada" ? "bg-red-50 text-red-700" : "bg-amber-100 text-amber-800"}`}>{causa.estado === "pendiente" ? "Por revisar" : causa.estado === "confirmada" ? "Confirmada" : "Descartada"}</span></div>
     <p className="mt-3 text-sm text-slate-700">{explicacion} <strong>Efecto sobre el cierre: {pesosConSigno(causa.efecto)}.</strong></p>
     <details className="mt-3 rounded-lg border border-slate-200 bg-white text-sm"><summary className="cursor-pointer px-3 py-3 font-bold text-blue-700">Ver evidencia</summary><dl className="grid gap-2 border-t border-slate-100 px-3 pb-3 pt-3 text-slate-600 sm:grid-cols-2">
       <div><dt className="font-bold text-slate-800">Movimiento revisado</dt><dd>{entidad}</dd></div><div><dt className="font-bold text-slate-800">Monto</dt><dd>{pesos(causa.monto)}</dd></div>
@@ -286,7 +296,7 @@ function CausaCard({ causa, diferencia, editable }: { causa: CausaCandidataVista
   </article>;
 }
 
-function FormularioMovimiento({ cierreId, titulo, action, horaActual, gasto = false }: { cierreId: number; titulo: string; action: (formData: FormData) => Promise<never>; horaActual: string; gasto?: boolean }) {
+function FormularioMovimiento({ cierreId, titulo, action }: { cierreId: number; titulo: string; action: (formData: FormData) => Promise<never> }) {
   return (
     <form action={action} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <input type="hidden" name="submission_id" value={randomUUID()} />
@@ -294,21 +304,16 @@ function FormularioMovimiento({ cierreId, titulo, action, horaActual, gasto = fa
       <h3 className="mb-3 font-bold text-slate-900">{titulo}</h3>
       <div className="space-y-3">
         <CampoMonto label="Monto" />
-        {gasto && <><Campo label="Categoría" name="categoria" required /><Campo label="Descripción (opcional)" name="descripcion" /></>}
         <label className="block text-xs font-bold text-slate-600">Medio de pago<select name="medio_pago" required className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"><option value="efectivo">Efectivo</option><option value="transferencia">Transferencia</option><option value="mercado_pago">Mercado Pago</option></select></label>
-        <label className="block text-xs font-bold text-slate-600">Hora<input type="time" name="hora" required defaultValue={horaActual} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>
+        <label className="block text-xs font-bold text-slate-600">Hora<LocalTimeInput /></label>
         <SubmitButton idle="Cargar" pending="Cargando…" className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-700" />
       </div>
     </form>
   );
 }
 
-function CampoMonto({ label, defaultValue }: { label: string; defaultValue?: string }) {
-  return <label className="block text-xs font-bold text-slate-600">{label}<span className="relative mt-1 block"><span className="absolute left-3 top-2.5 text-sm text-slate-500">$</span><input name="monto" inputMode="decimal" required pattern="[0-9]+([,.][0-9]{1,2})?" defaultValue={defaultValue} placeholder="0,00" className="block w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-7 pr-3 text-sm" /></span></label>;
-}
-
-function Campo({ label, name, required = false }: { label: string; name: string; required?: boolean }) {
-  return <label className="block text-xs font-bold text-slate-600">{label}<input name={name} required={required} maxLength={100} className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm" /></label>;
+function CampoMonto({ label, defaultValue, permitirCero = false }: { label: string; defaultValue?: string; permitirCero?: boolean }) {
+  return <label className="block text-xs font-bold text-slate-600">{label}<span className="relative mt-1 block"><span className="absolute left-3 top-2.5 text-sm text-slate-500">$</span><input name="monto" inputMode="decimal" required min={permitirCero ? 0 : undefined} pattern="[0-9]+([,.][0-9]{1,2})?" defaultValue={defaultValue} placeholder="0,00" className="block w-full rounded-lg border border-slate-300 bg-white py-2.5 pl-7 pr-3 text-sm" /></span></label>;
 }
 
 function Total({ label, value, tone = "default", prominent = false }: { label: string; value: string; tone?: "default" | "success" | "danger"; prominent?: boolean }) {

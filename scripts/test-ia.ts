@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { construirHechosParaIa, explicarCausa, explicacionDeterministica, horaActual, iaConfigurada, interpretarMovimiento, validarMovimientoInterpretado, validarRespuestaInterpretacion, type HechosExplicacionInternos } from "../lib/ia.ts";
+import { construirHechosParaIa, explicarCausa, explicacionDeterministica, horaActual, iaConfigurada, interpretarMovimiento, normalizarEntradaMedioPago, validarMovimientoInterpretado, validarRespuestaInterpretacion, type HechosExplicacionInternos } from "../lib/ia.ts";
 import { conciliarCierre } from "../lib/conciliacion.ts";
+import { horaLocalActual } from "../lib/hora-local.ts";
 
 const ahora = new Date(2026, 7, 19, 9, 7);
 
@@ -14,6 +15,13 @@ assert.equal(gasto.categoria, "Flete");
 const pago = validarMovimientoInterpretado({ tipo: "pago_recibido", monto_centavos: 1_600_000, medio_pago: "transferencia", hora: null }, ahora);
 assert.equal(pago.hora, "09:07");
 assert.equal(horaActual(ahora), "09:07");
+assert.match(horaLocalActual(ahora), /^(?:[01]\d|2[0-3]):[0-5]\d$/, "la hora local por defecto usa formato HH:mm");
+const sinHoraExplicita = validarMovimientoInterpretado({ tipo: "venta", monto_centavos: 100, medio_pago: "efectivo", hora: null }, ahora, "14:05");
+assert.equal(sinHoraExplicita.hora, "14:05", "sin hora explícita usa la hora local provista por el navegador");
+const conHoraExplicita = validarMovimientoInterpretado({ tipo: "venta", monto_centavos: 100, medio_pago: "efectivo", hora: "18:30" }, ahora, "14:05");
+assert.equal(conHoraExplicita.hora, "18:30", "la hora explícita nunca se reemplaza por el valor por defecto");
+assert.equal(normalizarEntradaMedioPago("Vendí 8500 por MP"), "Vendí 8500 por Mercado Pago", "F. MP se normaliza");
+assert.equal(normalizarEntradaMedioPago("cobré 12000 por mp"), "cobré 12000 por Mercado Pago", "F. mp se normaliza");
 
 assert.throws(() => validarMovimientoInterpretado({ tipo: "venta", monto_centavos: 100, medio_pago: "tarjeta", hora: "10:00" }));
 assert.throws(() => validarMovimientoInterpretado({ tipo: "venta", monto_centavos: 0, medio_pago: "efectivo", hora: "10:00" }));
@@ -50,6 +58,14 @@ assert.equal(hechosEfectivoParaIa.monto_formateado, "$12.500");
 assert.equal(hechosEfectivoParaIa.diferencia_formateada, "-$21.500");
 
 process.env.GEMINI_API_KEY = "clave-falsa-para-test";
+const entradasIa: string[] = [];
+const generadorMp = (async (opciones: { prompt: string }) => {
+  entradasIa.push(opciones.prompt);
+  return { output: { interpretado: true, tipo: "venta", monto_centavos: 850_000, medio_pago: "mercado_pago", hora: null, categoria: null, descripcion: null, motivo: null } };
+}) as never;
+const ventaMp = await interpretarMovimiento("Vendí 8500 por MP", ahora, generadorMp);
+assert.equal(ventaMp.ok && ventaMp.movimiento.medio_pago, "mercado_pago", "F. MP se interpreta como mercado_pago");
+assert.match(entradasIa[0], /Mercado Pago/);
 const generadorFallido = (async () => { throw new Error("fallo simulado"); }) as never;
 const fallo = await interpretarMovimiento("Vendí $100 en efectivo", ahora, generadorFallido);
 assert.equal(fallo.ok, false);

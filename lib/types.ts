@@ -34,8 +34,8 @@ export interface CierreListado {
 export interface ResumenMedio {
   medio: MedioPago;
   esperado: number;
-  registrado: number;
-  diferencia: number;
+  registrado: number | null;
+  diferencia: number | null;
 }
 
 export interface ResumenCierre {
@@ -56,6 +56,8 @@ export interface MovimientoDia {
   medioPago: MedioPago;
   hora: string;
   detalle: string;
+  categoria: string | null;
+  descripcion: string | null;
 }
 
 export type EstadoCausa = "pendiente" | "confirmada" | "descartada";

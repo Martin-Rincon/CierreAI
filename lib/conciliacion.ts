@@ -40,7 +40,7 @@ export interface ResultadoConciliacion {
   ventasSinMatch: VentaConciliable[];
   movimientosSinMatch: MovimientoPagoConciliable[];
   efectivoEsperado: number;
-  diferenciaEfectivo: number;
+  diferenciaEfectivo: number | null;
   causasCandidatas: CausaCalculada[];
 }
 
@@ -107,13 +107,15 @@ export function conciliarCierre(entrada: EntradaConciliacion): ResultadoConcilia
     .filter((g) => g.cierreId === entrada.cierreId && g.medioPago === "efectivo")
     .reduce((total, g) => total + g.monto, 0);
   const efectivoEsperado = entrada.efectivoInicial + ventasEfectivo - gastosEfectivo;
-  const diferenciaEfectivo = (entrada.efectivoContado ?? 0) - efectivoEsperado;
+  const diferenciaEfectivo = entrada.efectivoContado == null
+    ? null
+    : entrada.efectivoContado - efectivoEsperado;
 
   const causasCandidatas: CausaCalculada[] = [
     ...ventasSinMatch.map((v): CausaCalculada => ({ tipo: "venta_sin_pago", referenciaTipo: "venta", referenciaId: v.id, monto: v.monto, efecto: -v.monto })),
     ...movimientosSinMatch.map((m): CausaCalculada => ({ tipo: "pago_sin_venta", referenciaTipo: "movimiento_pago", referenciaId: m.id, monto: m.monto, efecto: m.monto })),
   ];
-  if (diferenciaEfectivo !== 0) {
+  if (diferenciaEfectivo != null && diferenciaEfectivo !== 0) {
     causasCandidatas.push({ tipo: "diferencia_efectivo", referenciaTipo: null, referenciaId: null, monto: Math.abs(diferenciaEfectivo), efecto: diferenciaEfectivo });
   }
 

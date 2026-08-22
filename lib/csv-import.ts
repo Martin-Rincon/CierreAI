@@ -1,12 +1,12 @@
 import { get, run, transaction, type DbExecutor } from "./db.ts";
-import { obtenerCierreParaCargaReal } from "./data.ts";
+import { obtenerCierreParaCargaReal, validarGastoEfectivo } from "./data.ts";
 import { validarCsv, type CsvValidado } from "./csv.ts";
 
 async function actualizarTotales(cierreId: number, tx: DbExecutor): Promise<void> {
   await run(`UPDATE cierres SET
-    total_esperado = efectivo_inicial
-      + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ?), 0)
-      - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ?), 0),
+    total_esperado = CASE WHEN efectivo_contado IS NULL THEN 0 ELSE efectivo_inicial END
+      + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ? AND (medio_pago != 'efectivo' OR cierres.efectivo_contado IS NOT NULL)), 0)
+      - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ? AND (medio_pago != 'efectivo' OR cierres.efectivo_contado IS NOT NULL)), 0),
     total_registrado = COALESCE(efectivo_contado, 0)
       + COALESCE((SELECT SUM(monto) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo'), 0)
     WHERE id = ?`, [cierreId, cierreId, cierreId, cierreId], tx);
@@ -39,6 +39,7 @@ export async function importarCsv(cierreId: number, contenido: string, bytes?: n
       if (movimiento.tipo === "venta") {
         await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'csv')", [cierre.id, movimiento.montoCentavos, movimiento.medioPago, movimiento.hora], tx);
       } else if (movimiento.tipo === "gasto") {
+        if (movimiento.medioPago === "efectivo") await validarGastoEfectivo(cierre.id, movimiento.montoCentavos, tx);
         await run("INSERT INTO gastos (cierre_id, monto, categoria, descripcion, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, ?, ?, 'csv')", [cierre.id, movimiento.montoCentavos, movimiento.categoria, movimiento.descripcion, movimiento.medioPago, movimiento.hora], tx);
       } else {
         await run("INSERT INTO movimientos_pago (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, ?, ?, ?, 'csv')", [cierre.id, movimiento.montoCentavos, movimiento.medioPago, movimiento.hora], tx);

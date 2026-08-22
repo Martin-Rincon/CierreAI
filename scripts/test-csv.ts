@@ -16,7 +16,7 @@ const encabezado = "tipo,monto,medio_pago,hora,categoria,descripcion";
 const valido = `${encabezado}\nventa,12500.50,mercado_pago,18:30,,\ngasto,5000,efectivo,14:00,flete,Entrega del día\npago,12500,mp,18:32,,`;
 
 async function crearCierre(fecha: string): Promise<number> {
-  return Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES (?, 0)", [fecha])).lastInsertRowid);
+  return Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES (?, 500000)", [fecha])).lastInsertRowid);
 }
 
 async function cantidad(id: number): Promise<number> {
@@ -77,6 +77,12 @@ try {
   assert.equal(await cantidad(rollback), 0, "19. una falla intermedia revierte todos los movimientos");
   assert.equal(Number((await get<{ total: number }>("SELECT COUNT(*) AS total FROM csv_importaciones WHERE cierre_id = ?", [rollback]))?.total), 0, "19b. también revierte el fingerprint");
   await run("DROP TRIGGER fallo_csv");
+
+  const sinEfectivo = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('2002-01-08', 0)")).lastInsertRowid);
+  const csvSaldoNegativo = `${encabezado}\nventa,100,transferencia,09:00,,\ngasto,1,efectivo,10:00,Caja,`;
+  await assert.rejects(importarCsv(sinEfectivo, csvSaldoNegativo), /supera el efectivo disponible/, "E. rechaza CSV que deja efectivo negativo");
+  assert.equal(await cantidad(sinEfectivo), 0, "E. el rechazo del saldo revierte todas las filas");
+  assert.equal(Number((await get<{ total: number }>("SELECT COUNT(*) AS total FROM csv_importaciones WHERE cierre_id = ?", [sinEfectivo]))?.total), 0, "E. tampoco guarda el fingerprint");
 
   assert.throws(() => validarCsv(`${encabezado}\nventa,1,efectivo,10:00,,`, CSV_MAX_BYTES + 1), /1 MB/, "20. limita el tamaño");
   const demasiadas = [encabezado, ...Array.from({ length: 1001 }, () => "venta,1,efectivo,10:00,,")].join("\n");

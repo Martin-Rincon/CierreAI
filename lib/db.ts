@@ -129,6 +129,8 @@ async function migrate(): Promise<void> {
         - COALESCE((SELECT SUM(g.monto) FROM gastos g WHERE g.cierre_id = c.id AND g.medio_pago = 'efectivo'), 0))
         FROM cierres c WHERE c.id = causas_candidatas.cierre_id) ELSE 0 END`);
   }
+  await client.execute(`DELETE FROM causas_candidatas WHERE tipo = 'diferencia_efectivo'
+    AND EXISTS (SELECT 1 FROM cierres c WHERE c.id = causas_candidatas.cierre_id AND c.efectivo_contado IS NULL)`);
   await client.execute(`UPDATE cierres SET estado = CASE WHEN diferencia = 0 THEN 'conciliado'
     WHEN COALESCE((SELECT SUM(cc.efecto) FROM causas_candidatas cc WHERE cc.cierre_id = cierres.id AND cc.estado = 'confirmada'), 0) = diferencia THEN 'resuelto'
     ELSE 'con_diferencia' END`);

@@ -9,9 +9,22 @@ process.env.TURSO_DATABASE_URL = `file:${databaseFile}`;
 delete process.env.TURSO_AUTH_TOKEN;
 
 const { closeDatabase, get, run } = await import("../lib/db.ts");
-const { finalizarCierre, obtenerCierreEditable, obtenerCierresPendientes, obtenerOCrearCierreActual, reabrirCierre } = await import("../lib/data.ts");
+const { calcularEfectivoDisponible, EfectivoInsuficienteError, finalizarCierre, obtenerCierreEditable, obtenerCierresPendientes, obtenerOCrearCierreActual, reabrirCierre, validarGastoEfectivo } = await import("../lib/data.ts");
 
 try {
+  assert.equal(calcularEfectivoDisponible(0, 1_500_000, 2_500_000), -1_000_000, "A. el gasto deja efectivo negativo y debe rechazarse");
+  assert.equal(calcularEfectivoDisponible(2_000_000, 1_500_000, 2_500_000), 1_000_000, "B. el gasto se permite y deja $10.000 esperados");
+  const cajaSinFondo = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('1999-01-01', 0)")).lastInsertRowid);
+  await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, 1500000, 'efectivo', '09:00', 'formulario')", [cajaSinFondo]);
+  await assert.rejects(validarGastoEfectivo(cajaSinFondo, 2_500_000), (error) => {
+    assert.ok(error instanceof EfectivoInsuficienteError);
+    assert.equal(error.disponible, 1_500_000, "el rechazo informa el efectivo disponible al modal");
+    assert.equal(error.gasto, 2_500_000, "el rechazo informa el gasto ingresado al modal");
+    return true;
+  }, "A. el servidor impide el gasto que deja caja negativa");
+  const cajaConFondo = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial) VALUES ('1999-01-02', 2000000)")).lastInsertRowid);
+  await run("INSERT INTO ventas (cierre_id, monto, medio_pago, hora, metodo_carga) VALUES (?, 1500000, 'efectivo', '09:00', 'formulario')", [cajaConFondo]);
+  await validarGastoEfectivo(cajaConFondo, 2_500_000);
   const ayerConciliado = Number((await run("INSERT INTO cierres (fecha, efectivo_inicial, diferencia, estado) VALUES ('2000-01-01', 0, 0, 'conciliado')")).lastInsertRowid);
   await obtenerOCrearCierreActual();
   assert.equal((await get<{ finalizado_at: string | null }>("SELECT finalizado_at FROM cierres WHERE id = ?", [ayerConciliado]))?.finalizado_at, null, "1. cambiar de fecha no finaliza el cierre anterior");

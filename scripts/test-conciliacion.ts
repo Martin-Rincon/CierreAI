@@ -27,6 +27,13 @@ resultado = conciliarCierre({ ...base, efectivoInicial: 1000, efectivoContado: 1
 assert.equal(resultado.diferenciaEfectivo, -100, "7. debe calcular diferencia de efectivo");
 assert.equal(resultado.causasCandidatas[0]?.tipo, "diferencia_efectivo");
 
+const sinEfectivoContado = conciliarCierre({ ...base, efectivoInicial: 1000, efectivoContado: null });
+assert.equal(sinEfectivoContado.diferenciaEfectivo, null, "C. efectivo contado null no calcula diferencia");
+assert.equal(sinEfectivoContado.causasCandidatas.some((causa) => causa.tipo === "diferencia_efectivo"), false, "C. efectivo contado null no genera causa");
+const efectivoCeroExplicito = conciliarCierre({ ...base, efectivoInicial: 1000, efectivoContado: 0 });
+assert.equal(efectivoCeroExplicito.diferenciaEfectivo, -1000, "D. cero explícito sí se compara");
+assert.equal(efectivoCeroExplicito.causasCandidatas.some((causa) => causa.tipo === "diferencia_efectivo"), true, "D. cero explícito genera causa cuando no coincide");
+
 const entrada = { ...base, ventas: [venta(1, 12500, "11:15", "mercado_pago")] };
 assert.deepEqual(conciliarCierre(entrada), conciliarCierre(entrada), "8. dos ejecuciones deben ser idénticas y no duplicar causas");
 assert.equal(conciliarCierre(entrada).causasCandidatas.length, 1);

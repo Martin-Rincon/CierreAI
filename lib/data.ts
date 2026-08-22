@@ -48,6 +48,42 @@ interface MovimientoRow {
   medio_pago: MedioPago;
   hora: string;
   detalle: string;
+  categoria: string | null;
+  descripcion: string | null;
+}
+
+export const MENSAJE_EFECTIVO_INSUFICIENTE = "Este gasto supera el efectivo disponible en caja. Revisá el efectivo inicial, las ventas registradas o el monto del gasto.";
+
+export class EfectivoInsuficienteError extends Error {
+  readonly disponible: number;
+  readonly gasto: number;
+
+  constructor(disponible: number, gasto: number) {
+    super(MENSAJE_EFECTIVO_INSUFICIENTE);
+    this.name = "EfectivoInsuficienteError";
+    this.disponible = disponible;
+    this.gasto = gasto;
+  }
+}
+
+export function calcularEfectivoDisponible(efectivoInicial: number, ventasEfectivo: number, gastosEfectivo: number): number {
+  return efectivoInicial + ventasEfectivo - gastosEfectivo;
+}
+
+export async function obtenerEfectivoDisponible(cierreId: number, executor?: DbExecutor): Promise<number> {
+  const row = await get<{ disponible: number }>(`SELECT efectivo_inicial
+    + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = cierres.id AND medio_pago = 'efectivo'), 0)
+    - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = cierres.id AND medio_pago = 'efectivo'), 0) AS disponible
+    FROM cierres WHERE id = ?`, [cierreId], executor);
+  if (!row) throw new Error("El cierre seleccionado no existe.");
+  return row.disponible;
+}
+
+export async function validarGastoEfectivo(cierreId: number, monto: number, executor?: DbExecutor): Promise<void> {
+  const disponible = await obtenerEfectivoDisponible(cierreId, executor);
+  if (disponible - monto < 0) {
+    throw new EfectivoInsuficienteError(disponible, monto);
+  }
 }
 
 export function fechaLocal(): string {
@@ -135,20 +171,20 @@ async function construirResumen(row: CierreRow): Promise<ResumenCierre> {
 
   const efectivoEsperado =
     cierre.efectivoInicial + totales.ventas_efectivo - totales.gastos_efectivo;
-  const valores: Record<MedioPago, [number, number]> = {
-    efectivo: [efectivoEsperado, cierre.efectivoContado ?? 0],
+  const valores: Record<MedioPago, [number, number | null]> = {
+    efectivo: [efectivoEsperado, cierre.efectivoContado],
     transferencia: [totales.ventas_transferencia - totales.gastos_transferencia, totales.pagos_transferencia],
     mercado_pago: [totales.ventas_mercado_pago - totales.gastos_mercado_pago, totales.pagos_mercado_pago],
   };
 
   return {
     cierre,
-    desglose: (Object.entries(valores) as [MedioPago, [number, number]][]).map(
+    desglose: (Object.entries(valores) as [MedioPago, [number, number | null]][]).map(
       ([medio, [esperado, registrado]]) => ({
         medio,
         esperado,
         registrado,
-        diferencia: registrado - esperado,
+        diferencia: registrado == null ? null : registrado - esperado,
       }),
     ),
     cantidadVentas: totales.cantidad_ventas,
@@ -161,21 +197,20 @@ async function construirResumen(row: CierreRow): Promise<ResumenCierre> {
 
 export async function obtenerMovimientosDelDia(cierreId: number): Promise<MovimientoDia[]> {
   const rows = await all<MovimientoRow>(
-    `SELECT id, 'venta' AS tipo, monto, medio_pago, hora, 'Venta' AS detalle
+    `SELECT id, 'venta' AS tipo, monto, medio_pago, hora, 'Venta' AS detalle, NULL AS categoria, NULL AS descripcion
        FROM ventas WHERE cierre_id = ?
      UNION ALL
-     SELECT id, 'gasto', monto, medio_pago, hora,
-       CASE WHEN descripcion = '' THEN categoria ELSE categoria || ' · ' || descripcion END
+     SELECT id, 'gasto', monto, medio_pago, hora, categoria AS detalle, categoria, NULLIF(descripcion, '')
        FROM gastos WHERE cierre_id = ?
      UNION ALL
-     SELECT id, 'pago', monto, medio_pago, hora, 'Pago recibido'
+     SELECT id, 'pago', monto, medio_pago, hora, 'Pago recibido', NULL, NULL
        FROM movimientos_pago WHERE cierre_id = ?
      ORDER BY hora DESC, id DESC`,
     [cierreId, cierreId, cierreId],
   );
   return rows.map((row) => ({
     id: row.id, tipo: row.tipo, monto: row.monto, medioPago: row.medio_pago,
-    hora: row.hora, detalle: row.detalle,
+    hora: row.hora, detalle: row.detalle, categoria: row.categoria, descripcion: row.descripcion,
   }));
 }
 
@@ -208,6 +243,9 @@ export async function ejecutarConciliacion(cierreId: number): Promise<void> {
     }
 
     await run("DELETE FROM causas_candidatas WHERE cierre_id = ? AND estado = 'pendiente'", [cierre.id], tx);
+    if (cierre.efectivo_contado == null) {
+      await run("DELETE FROM causas_candidatas WHERE cierre_id = ? AND tipo = 'diferencia_efectivo'", [cierre.id], tx);
+    }
     for (const causa of resultado.causasCandidatas) {
       const existente = await get<{ id: number }>(
         `SELECT id FROM causas_candidatas WHERE cierre_id = ? AND tipo = ?
@@ -320,9 +358,9 @@ export async function eliminarMovimiento(cierreId: number, tipo: TipoMovimiento,
     await run("UPDATE ventas SET conciliada = 0 WHERE cierre_id = ?", [cierre.id], tx);
     await run("UPDATE movimientos_pago SET conciliado = 0 WHERE cierre_id = ?", [cierre.id], tx);
     await run(`UPDATE cierres SET
-      total_esperado = efectivo_inicial
-        + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ?), 0)
-        - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ?), 0),
+      total_esperado = CASE WHEN efectivo_contado IS NULL THEN 0 ELSE efectivo_inicial END
+        + COALESCE((SELECT SUM(monto) FROM ventas WHERE cierre_id = ? AND (medio_pago != 'efectivo' OR cierres.efectivo_contado IS NOT NULL)), 0)
+        - COALESCE((SELECT SUM(monto) FROM gastos WHERE cierre_id = ? AND (medio_pago != 'efectivo' OR cierres.efectivo_contado IS NOT NULL)), 0),
       total_registrado = COALESCE(efectivo_contado, 0)
         + COALESCE((SELECT SUM(monto) FROM movimientos_pago WHERE cierre_id = ? AND medio_pago != 'efectivo'), 0)
       WHERE id = ?`, [cierre.id, cierre.id, cierre.id, cierre.id], tx);
@@ -417,8 +455,8 @@ export async function vaciarDatosCierre(cierreId: number, soloSiDemo = false): P
     await run("DELETE FROM ventas WHERE cierre_id = ?", [cierre.id], tx);
     await run("DELETE FROM gastos WHERE cierre_id = ?", [cierre.id], tx);
     await run("DELETE FROM movimientos_pago WHERE cierre_id = ?", [cierre.id], tx);
-    await run(`UPDATE cierres SET efectivo_contado = NULL, total_esperado = efectivo_inicial,
-      total_registrado = 0, diferencia = -efectivo_inicial, estado = CASE WHEN efectivo_inicial = 0 THEN 'conciliado' ELSE 'con_diferencia' END,
+    await run(`UPDATE cierres SET efectivo_contado = NULL, total_esperado = 0,
+      total_registrado = 0, diferencia = 0, estado = 'conciliado',
       analizado = 0, es_demo = 0 WHERE id = ?`, [cierre.id], tx);
   });
   return fecha;
